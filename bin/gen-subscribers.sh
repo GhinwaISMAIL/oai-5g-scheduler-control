@@ -20,8 +20,8 @@
 
 set -e
 
-NUM_CELLS="${1:-2}"
-UES_PER_CELL="${2:-12}"
+NUM_CELLS="${1:-1}"
+UES_PER_CELL="${2:-2}"
 BASE_SQL="${3:-/local/repository/etc/oai_db.sql}"
 OUT_SQL="${4:-$BASE_SQL}"
 

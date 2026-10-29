@@ -1,291 +1,114 @@
-# oai-5g-ric-validation
+# oai-5g-scheduler-control
 
-Multi-cell OAI 5G SA testbed on POWDER, with a FlexRIC near-RT RIC and per-UE radio
-channel modelling. The RAN is simulated at the PHY layer (RFsim) with a configurable
-channel; the core network, control plane and user plane are real.
+Single-cell OAI 5G Standalone testbed for scheduler-control research, with a
+complete software 5G protocol stack and FlexRIC near-RT RIC/xApp integration.
+The default reservation uses **two physical hosts, one gNB and two OAI UEs**.
 
-Instantiating the POWDER profile brings up the whole system: core network, RIC,
-one to three reserved cell nodes, and their UEs.
+The UE and gNB execute the NR PHY/MAC/RLC/PDCP/RRC and NAS procedures. RFsim
+transports IQ samples instead of over-the-air radios. This is a full software
+network, not a packet-only model; it does not provide physical RF coverage or
+commercial-device connectivity without a separate radio deployment.
 
 ## Architecture
 
-```
-                     experimental LAN 10.10.1.0/26
-  core (.1) ──────────────────┬──────────────────┬────────── ...
-  ┌──────────────────────┐    │                  │
-  │ mysql udr udm ausf   │  cell1 (.11)       cell2 (.12)
-  │ amf smf upf ext-dn   │  ┌─────────────┐   ┌─────────────┐
-  │ near-RT RIC (host)   │  │    gNB      │   │    gNB      │
-  └──────────────────────┘  │   + K UEs   │   │   + K UEs   │
-   Docker bridges:          └─────────────┘   └─────────────┘
-     public  192.168.71.128/26
-     traffic 192.168.72.128/26
+```text
+core host: 10.10.1.1                 cell1 host: 10.10.1.11
+  MySQL + UDR/UDM/AUSF                 OAI gNB + embedded E2 agent
+  AMF/SMF/UPF                            | RFsim on this same host
+  external data network                  +-- OAI UE1 + oaitun_ue1
+  FlexRIC near-RT RIC                     +-- OAI UE2 + oaitun_ue1
+  monitoring xApps
+        | N2 / N3 / E2 over experimental LAN |
 ```
 
-One core node runs the 5G core and the RIC. Each cell node runs one gNB with its UEs
-colocated.
+The complete inherited core includes subscriber authentication, registration,
+PDU-session establishment and a real user plane through UPF to the data network.
+The RIC is built natively on core from the pinned OAI FlexRIC submodule.
+UEs remain colocated with their gNB, retaining the baseline local IQ transport.
+There is no handover prototype or extra cell in this repository's active profile.
 
-Each cell also receives a unique default Docker bridge
-(`172.30.<cell>.1/24`). FlexRIC advertises every host address in its SCTP
-association, so reusing Docker's `172.17.0.1` on every node can make the RIC send a
-heartbeat to its own local bridge and receive an SCTP abort instead of reaching the
-cell.
+## What is implemented
 
-**A cell's gNB and its UEs must remain on the same node.** The RFsim IQ path between
-them is local, which is what keeps the channel model the only source of impairment.
-Splitting UEs onto a different node from their gNB would push IQ samples over the
-network and contaminate the channel being modelled.
+| Capability | Status |
+| --- | --- |
+| One-cell POWDER allocation, two UEs by default | Implemented; new repository deployment pending |
+| Full OAI 5G SA core and RFsim RAN setup | Inherited setup retained; fresh reservation validation required |
+| Embedded E2 agent and matched FlexRIC build | Included, with pinned radio artifact references |
+| Monitoring xApps and SQLite telemetry | Included through the FlexRIC build; start after E2 setup |
+| Bounded MGEN traffic and receiver observation safeguards | Included with local regression and loopback evidence |
+| xApp-enforced per-UE PRB shares or scheduler switching | **Not implemented in the pinned upstream control path** |
 
-Only control and user plane cross the LAN, all of which tolerate network latency:
+The first scheduler target is configurable **downlink allocation between two
+competing UEs**, with the unmodified scheduler as the baseline. Inspecting the
+exact pinned source exposed unsupported or placeholder control callbacks; sending
+an E2 control message is not evidence that allocation changed. See
+[docs/SCHEDULER_CONTROL.md](docs/SCHEDULER_CONTROL.md). No unsupported scheduler
+xApp is auto-started, and no fixed-share enforcement is claimed.
 
-| flow | from → to | reachability |
-|------|-----------|--------------|
-| N2 (NGAP) | cell gNB → AMF `192.168.71.132` | route via core `.1`, forwarded by the core node |
-| N3 (GTP-U) | cell gNB ↔ UPF `192.168.71.134` | same route; the gNB advertises its LAN IP for NGU |
-| E2 | cell gNB → RIC `10.10.1.1` | direct on the LAN |
+## Deploy later on a separate reservation
 
-## Components
+Create a new POWDER profile from this private repository, using `profile.py`.
+Authorize POWDER to read the private repository, as required by your project.
+The entrypoint fixes the number of cells to one; `ues_per_cell` defaults to two.
+It reserves core (default d430) and cell1 (default d740). Availability is not checked
+here. The profile automatically executes setup on the newly reserved hosts.
 
-The gNB and UE run from custom images. Stock OAI images will not work: they do not
-apply file-based channel models and carry no E2 agent.
+The profile, setup and subscriber generator default to one cell and two UEs.
+Cell/core setup reject extra cells before installing or changing services.
+The core release family remains v2.0.0; the radio artifacts are pinned by digest.
+See [BUILD.md](BUILD.md) for provenance limitations. Do not deploy this on the
+hosts serving an existing measurement campaign.
 
-| image | contents |
-|-------|----------|
-| `ghinwa555/oai-gnb-e2-chan:v2` | gNB with RFsim, channel model, telnet server, E2 agent |
-| `ghinwa555/oai-nr-ue-chan:v2` | UE with RFsim, channel model, telnet server |
+Boot order: **core network and RIC → gNB → UEs → traffic → xApp**.
+Setup logs are `/local/logs/setup.log` on each host; RIC output is
+`/local/logs/nearRT-RIC.log` on core. Inspect setup errors rather than treating
+container existence as registration or PDU-session success. Bring-up requires
+package downloads and source compilation; it has not been timed on a fresh
+reservation for this repository.
 
-The near-RT RIC runs as a host process on the core node, built from OAI's FlexRIC
-submodule at boot. It is not containerised: a RIC built from the standalone FlexRIC
-repository sends subscription requests that OAI's embedded E2 agent does not answer,
-and no indications are produced.
+Check the core containers, gNB E2 registration, and both UEs' tunnels before
+sending traffic. MGEN helpers discover assigned UE IPs rather than assuming them.
+The readiness commands in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) are for the
+later reservation; creating this repository does not execute them.
 
-The setup pins the validated OAI revision
-`70508ebaf52f2aae420566d380c6537f2efb9f0c` and FlexRIC revision
-`ef6d722f22191eea74089966983da1f5ec1fedd4`. Before building, it applies a
-checked, idempotent patch that replaces the fixed 2048-byte MAC, RLC, PDCP and GTP
-SQLite aggregation buffers with capacity proportional to the number of records.
-This prevents the `out_len >= max` assertions seen with multiple attached UEs.
-The setup also redirects FlexRIC's redundant iApp indication trace from the
-relative `log.txt` to `/dev/null`. At multi-cell indication rates the upstream
-file is unbounded and was observed to grow to 50 GB, fill the core filesystem,
-and make SQLite fail inside `insert_db`. The normal RIC process log remains at
-`/local/logs/nearRT-RIC.log`, and bounded xApp logs remain under `/local/logs`.
+## Monitoring xApps
 
-`BUILD.md` records the known build constraints and missing image provenance.
-See [VALIDATION.md](VALIDATION.md) for explicit campaign observation policies,
-process lifecycle checks, packet reconciliation, resource time series, and
-controlled experiments.
-
-## Instantiating
-
-Progress is in `/local/logs/setup.log` on every node, and the RIC's output is in
-`/local/logs/nearRT-RIC.log` on the core.
-
-Subscribers are generated for `num_cells × ues_per_cell` before MySQL starts, so UE
-count is a profile parameter rather than a hand-edited database.
-
-## Verifying the deployment
-
-On the core:
-
-```bash
-# the RIC is up and has loaded its service models
-grep "Loading SM ID" /local/logs/nearRT-RIC.log
-
-# every gNB has registered over E2
-grep "E2 SETUP-REQUEST rx" /local/logs/nearRT-RIC.log
-
-# every gNB has registered with the AMF
-sudo docker logs ric5g-oai-amf 2>&1 | grep -A3 "gNBs' information" | tail
-```
-
-On a cell node:
-
-```bash
-# the channel model is active (absent on stock images)
-sudo docker logs ric5g-gnb-cell1 2>&1 | grep OCM
-#   Model rfsimu_channel_ue0 type AWGN allocated from config file
-
-# UEs are attached
-for u in $(seq 1 12); do
-  sudo docker exec ric5g-ue-cell1-$u ip -4 addr show oaitun_ue1 2>/dev/null \
-    | grep -o 'inet [0-9.]*'
-done
-
-# the data path is intact end to end
-sudo docker exec ric5g-ue-cell1-1 ping -I oaitun_ue1 -c3 192.168.72.135
-```
-
-### Distributed MGEN preflight
-
-The external DN is on the core node while UE containers are on their respective
-cell nodes. Run the MGEN coordinator from the operator workstation, where SSH can
-reach both POWDER hosts. Do not run the old single-Docker-host workflow on a node.
-
-First validate one UE with a short bidirectional flow:
-
-```bash
-cd oai-5g-ric
-
-bash bin/mgen-run-distributed.sh \
-  ghinwa@CORE_POWDER_HOST \
-  ghinwa@CELL1_POWDER_HOST \
-  1 1 full
-```
-
-Then validate all UEs on each cell:
-
-```bash
-# Registration, MGEN binary, and tunnel route only
-bash bin/mgen-run-distributed.sh \
-  ghinwa@CORE_POWDER_HOST ghinwa@CELL1_POWDER_HOST 1 all quick
-
-# Bounded uplink and downlink MGEN flows
-bash bin/mgen-run-distributed.sh \
-  ghinwa@CORE_POWDER_HOST ghinwa@CELL1_POWDER_HOST 1 all full
-
-bash bin/mgen-run-distributed.sh \
-  ghinwa@CORE_POWDER_HOST ghinwa@CELL2_POWDER_HOST 2 all full
-```
-
-The default full test sends ten 1000-byte packets per second in each direction for
-five seconds per UE. Override the controlled load with environment variables:
-
-```bash
-RATE=100 SIZE=1200 DURATION=60 \
-  bash bin/mgen-run-distributed.sh \
-  ghinwa@CORE_POWDER_HOST ghinwa@CELL1_POWDER_HOST 1 1 full
-```
-
-MGEN logs persist under `/local/logs/mgen` on the core and selected cell. The
-coordinator also checks `oaitun_ue1` packet counters, so Docker-bridge traffic
-cannot be mistaken for valid 5G user-plane traffic.
-
-## The channel model
-
-The POWDER reservation form exposes `channel_type` (`AWGN`, `TDL_A`, `TDL_B`,
-`TDL_C`, `EPA`, `EVA`, or `ETU`) and `channel_initial_mode` (`uniform` or
-`gradient`). These select the boot-time model. A running experiment changes
-numeric parameters through the verified helper below; it does not hot-swap the
-model family.
-
-Each cell has its own model file, `etc/channelmod-cell<N>.conf`, generated at boot
-with one model per UE (`rfsimu_channel_enB0` for the uplink, and
-`rfsimu_channel_ue0 .. ue(K-1)` for each UE's downlink). Cells can therefore carry
-different channel conditions, and UEs within a cell can differ from one another.
-
-`bin/gen-channelmod.sh` produces the file. It supports a `uniform` mode (all UEs
-identical) and a `gradient` mode (path loss increasing from cell centre to cell
-edge), and any of AWGN, TDL-A/B/C, EPA, EVA or ETU.
-
-The default is a quiet channel, deliberately. **Noise gates random access**: at
-`noise_power_dB` of −4/−2 no UE completes RACH — they synchronise, decode SIB1, and
-then loop on `RAR reception failed`. The generated baseline uses −30, at which UEs
-attach reliably. Let the UEs attach first, then impair the channel.
-
-Models can be changed at runtime over telnet. The server runs in the UE, since the
-downlink channel is applied UE-side:
-
-```
-telnet <ue> 9090
-  channelmod show current              # model 0 is the active downlink in this UE
-  channelmod modify 0 noise_power_dB -25
-```
-
-Parameters: `riceanf`, `aoa`, `randaoa`, `ploss`, `noise_power_dB`, `offset`,
-`forgetf`.
-
-The generated gNB and UE commands enable `--telnetsrv` by default. For scripted
-experiments, use `bin/channel-cell.py` on the cell node instead of driving an
-interactive telnet session. It verifies every value after applying it:
-
-```bash
-# Per-UE downlink: select UE2; its active model index is 0
-sudo python3 bin/channel-cell.py set --cell 1 --direction dl --ue 2 \
-  --parameter ploss --value 12
-```
-
-Runtime uplink modification is disabled because connection-to-model identity is
-not stable. The helper rejects `--direction ul`.
-
-Channel family/type remains a boot-time setting. Runtime schedules may change
-`ploss`, `noise_power_dB`, `riceanf`, `aoa`, `offset`, and `forgetf` after UEs
-have attached. A failed read-back must invalidate a labelled data-collection run.
-
-## Collecting measurements
-
-Run an xApp on the core, **after** the gNBs have registered and the UEs are attached
-and carrying traffic. KPM reports per-UE throughput and resource usage; an idle cell
-reports nothing.
+After the gNB is registered with the RIC and UE traffic has been verified, run on
+core, choosing **one** monitor for the first experiment:
 
 ```bash
 cd /opt/oai-src/openair2/E2AP/flexric
+./build/examples/xApp/c/monitor/xapp_kpm_moni
+# Or, for MAC/RLC/PDCP/GTP telemetry:
 ./build/examples/xApp/c/monitor/xapp_gtp_mac_rlc_pdcp_moni
 ```
 
-Measurements are written to a SQLite database at `/tmp/xapp_db_*`:
+These executables are built by `bin/core-setup.sh`; they do not require a separate
+standalone FlexRIC installation. The source pins OAI
+`70508ebaf52f2aae420566d380c6537f2efb9f0c` and FlexRIC
+`ef6d722f22191eea74089966983da1f5ec1fedd4`.
 
-| table | contents |
-|-------|----------|
-| `KPM_MeasRecord` | per-UE KPM: throughput, PDCP volume, RLC delay, PRB usage |
-| `MAC_UE` | per-UE, per-slot: PUSCH/PUCCH SNR, CQI, MCS, BLER, HARQ rounds, PRBs, BSR, PHR |
-| `RLC_bearer`, `PDCP_bearer`, `GTP_NGUT` | per-bearer counters |
-| `RC_MEAS_REPORT` | RSRP, RSRQ, SINR |
-| `SLICE`, `UE_SLICE` | slice state |
+Start with the smallest reporting scope/rate needed. Do not start a monitor before
+E2 registration or treat placeholder slice values as scheduler state. In the
+pinned source, the customized slice reader uses synthetic fill data; it is not
+proof of enforced slice allocation. MAC cumulative counters can support allocation
+measurement, but the exported slot field is not a reliable per-slot index.
 
-`MAC_UE` is the table that responds to changes in the channel model.
+Stop xApps with SIGINT/Ctrl-C and verify their clean shutdown; do not force-kill
+them. Restarting RIC requires restarting/re-registering the gNB, which drops UE
+sessions. Keep this separate from scheduler-policy comparisons.
 
-## Operational constraints
+## Local verification
 
-- **Restarting the RIC orphans every gNB.** OAI's E2 agent does not re-establish: it
-  heartbeats the dead association and the RIC replies with an SCTP abort. Every gNB
-  must be restarted after the RIC.
-- **Restarting a gNB drops all of its UEs.** They need an explicit restart, and their
-  data-network routes re-applied.
-- **Stop an xApp with `Ctrl-C`/`SIGINT`, never `SIGKILL`.** A clean interrupt sends
-  subscription-delete requests and waits for their responses. Confirm
-  `Successfully stopped` and `Test xApp run SUCCESSFULLY` in the log. Force-killing
-  can leave the RIC's xApp-facing SCTP state with undrained buffers.
-- **Do not start an xApp automatically.** Started before the gNBs have completed E2
-  setup, it crashes and leaves the RIC's xApp-facing state unusable.
-- **Do not restore FlexRIC's relative `log.txt` indication trace.** It records the
-  high-rate service-model stream without rotation. The profile intentionally
-  sends that redundant trace to `/dev/null`; use bounded xApp logs and the compact
-  per-run PRB export for measurements.
-
-Bring-up order, whether automatic or by hand: **core → RIC → gNB → UEs → traffic →
-xApp.**
-
-## Limits
-
-The profile accepts `num_cells=1..3`; each selected cell consumes one POWDER raw PC.
-The UPF allocates PDU addresses from `12.1.1.0/24`, bounding the total UE count.
-Per-cell UE count is limited by the single `nr-softmodem` process serving the cell;
-scale by adding cells rather than overloading one gNB. A small number of UEs may fail
-to attach on first boot (a registration race) and recover on restart — `cell-setup.sh`
-handles this.
-
-## Layout
-
+```bash
+python3 -m pip install -r tests/requirements.txt
+python3 -m pytest -q
 ```
-profile.py               POWDER profile: 1 core node + 1–3 cell nodes
-BUILD.md                 image builds and the constraints that apply
-bin/node-setup.sh        dispatcher (core | cell)
-bin/core-setup.sh        core: 5G core network, then FlexRIC built and run natively
-bin/cell-setup.sh        cell: routes, wait for AMF, gNB + UEs, data-network routes
-bin/gen-channelmod.sh    per-UE channel models for a cell
-bin/gen-subscribers.sh   subscriber database for num_cells × ues_per_cell
-bin/mgen-core.sh         core-local external-DN MGEN endpoint helper
-bin/mgen-cell.sh         cell-local UE MGEN and tunnel-counter helper
-bin/mgen-run-distributed.sh
-                         workstation-side SSH coordinator for core + one cell
-bin/mgen-preflight.sh    compatibility notice for the removed single-host flow
-bin/patch-flexric-sqlite-buffers.py
-                         checked MAC/RLC/PDCP/GTP SQLite buffer fix
-bin/patch-flexric-receipt-timestamps.py
-                         preserves RFsim time and records core receipt time for
-                         wall-clock alignment with traffic and channel events
-etc/gnb-cell.conf.tmpl   gNB template: E2 agent, channel model, per-cell identities
-etc/nr-ue.conf.tmpl      UE template
-Dockerfile.flexric       reference build for a containerised RIC (see BUILD.md)
-```
+
+Inherited tests cover channel mapping, FlexRIC patches, QoS generation, receiver
+lifecycle and packet reconciliation. The Linux-only isolated MGEN compatibility
+test and raw evidence are retained under `tests/integration/` and `validation/`.
+Local tests do not certify this new deployment or future scheduler actuation.
+
+See [VALIDATION.md](VALIDATION.md) for explicit drain policies and censored packets,
+and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the initial two-UE acceptance run.

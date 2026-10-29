@@ -6,7 +6,7 @@
 #   role = core | cell
 # =============================================================================
 
-set +e
+set -euo pipefail
 
 ROLE="$1"
 INDEX="$2"
@@ -14,6 +14,12 @@ NUM_CELLS="$3"
 UES_PER_CELL="$4"
 CHANNEL_MODE="${5:-uniform}"
 CHANNEL_TYPE="${6:-AWGN}"
+
+if [ "$NUM_CELLS" != 1 ] || { [ "$ROLE" = cell ] && [ "$INDEX" != 1 ]; }; then
+    echo "ERROR: this repository supports exactly one cell (cell1)" >&2
+    exit 2
+fi
+
 
 mkdir -p /local/logs
 chmod +x /local/repository/bin/*.sh

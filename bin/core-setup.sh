@@ -12,6 +12,13 @@
 set +e
 
 CORE_LAN_IP="${1:-10.10.1.1}"
+NUM_CELLS="${2:-1}"
+UES_PER_CELL="${3:-2}"
+if [ "$NUM_CELLS" != 1 ]; then
+    echo "ERROR: this repository supports exactly one cell" >&2
+    exit 2
+fi
+[[ "$UES_PER_CELL" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: invalid UE count" >&2; exit 2; }
 OAI_COMMIT="70508ebaf52f2aae420566d380c6537f2efb9f0c"
 FLEXRIC_COMMIT="ef6d722f22191eea74089966983da1f5ec1fedd4"
 
@@ -84,8 +91,7 @@ fi
 #    will fail authentication, or (if only half-present) register and then fail
 #    PDU session establishment.
 # ------------------------------------------------------------------ #
-NUM_CELLS="${2:-2}"
-UES_PER_CELL="${3:-12}"
+
 bash /local/repository/bin/gen-subscribers.sh "${NUM_CELLS}" "${UES_PER_CELL}"
 
 # ------------------------------------------------------------------ #

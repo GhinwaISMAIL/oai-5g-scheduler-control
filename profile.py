@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-POWDER profile: oai-5g-ric
-Multi-cell OAI 5G SA RFsim scale-out with FlexRIC near-RT RIC + channel model.
+POWDER profile: oai-5g-scheduler-control
+Single-cell OAI 5G SA RFsim with FlexRIC near-RT RIC and two competing UEs.
 
 Topology:
   1 x core node  : CN NFs + FlexRIC nearRT-RIC                   (default d430)
-  N x cell nodes : one E2-enabled, chanmod-capable gNB + K UEs   (default d740)
+  1 x cell node  : one E2-enabled, chanmod-capable gNB + K UEs   (default d740)
 
 Shared experimental LAN 10.10.1.0/26: core = .1, cell-k = .(10+k)
 
@@ -18,12 +18,12 @@ import geni.portal as portal
 import geni.rspec.pg as rspec
 import geni.rspec.igext as IG
 
+NUM_CELLS = 1
+
 pc = portal.context
 
-pc.defineParameter("num_cells", "Number of cell nodes (gNBs)",
-                   portal.ParameterType.INTEGER, 2)
 pc.defineParameter("ues_per_cell", "UEs per cell",
-                   portal.ParameterType.INTEGER, 12)
+                   portal.ParameterType.INTEGER, 2)
 pc.defineParameter("core_type", "Core node hardware type",
                    portal.ParameterType.NODETYPE, "d430")
 pc.defineParameter("cell_type", "Cell node hardware type",
@@ -35,10 +35,6 @@ pc.defineParameter("channel_initial_mode", "Initial per-UE channel layout",
 
 params = pc.bindParameters()
 
-if params.num_cells < 1:
-    pc.reportError(portal.ParameterError("num_cells must be >= 1", ["num_cells"]))
-if params.num_cells > 3:
-    pc.reportError(portal.ParameterError("num_cells must be <= 3", ["num_cells"]))
 if params.ues_per_cell < 1:
     pc.reportError(portal.ParameterError("ues_per_cell must be >= 1", ["ues_per_cell"]))
 if params.channel_type not in ("AWGN", "TDL_A", "TDL_B", "TDL_C", "EPA", "EVA", "ETU"):
@@ -70,7 +66,7 @@ def setup(node, role, index):
         command=("sudo mkdir -p /local/logs && "
                  "sudo bash /local/repository/bin/node-setup.sh %s %d %d %d %s %s "
                  ">> /local/logs/setup.log 2>&1"
-                 % (role, index, params.num_cells, params.ues_per_cell,
+                 % (role, index, NUM_CELLS, params.ues_per_cell,
                     params.channel_initial_mode, params.channel_type))))
 
 core = request.RawPC("core")
@@ -79,7 +75,7 @@ core.disk_image = IMAGE
 add_iface(core, CORE_LAN_IP)
 setup(core, "core", 0)
 
-for k in range(1, params.num_cells + 1):
+for k in range(1, NUM_CELLS + 1):
     cell = request.RawPC("cell%d" % k)
     cell.hardware_type = params.cell_type
     cell.disk_image = IMAGE
@@ -88,7 +84,7 @@ for k in range(1, params.num_cells + 1):
 
 tour = IG.Tour()
 tour.Description(IG.Tour.TEXT,
-    "Multi-cell OAI 5G SA RFsim scale-out with FlexRIC near-RT RIC and channel "
+    "Single-cell OAI 5G SA RFsim with FlexRIC near-RT RIC and channel "
     "modelling. One core node runs the CN + RIC; each cell node runs one "
     "E2-enabled, chanmod-capable gNB with its UEs colocated. Start xApps by hand "
     "after E2 registration and UE attachment. "

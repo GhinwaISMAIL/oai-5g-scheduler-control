@@ -1,0 +1,26 @@
+{
+  "topology": {
+    "cells": 1,
+    "default_ues": 2,
+    "hosts": [
+      "core",
+      "cell1"
+    ],
+    "radio_transport": "RFsim; gNB and UEs colocated"
+  },
+  "oai_revision": "70508ebaf52f2aae420566d380c6537f2efb9f0c",
+  "flexric_revision": "ef6d722f22191eea74089966983da1f5ec1fedd4",
+  "gnb_image": "ghinwa555/oai-gnb-e2-chan@sha256:1bc3c341b498fdc2096721bd0b86f5bdd3ca985a930617163c611db5a9bc5501",
+  "ue_image": "ghinwa555/oai-nr-ue-chan@sha256:f00af9714f0e953c79d8e4def6b71d15d9af2c504bca1e0a8db2edbb59d6fb60",
+  "core_release_family": "v2.0.0",
+  "capabilities": {
+    "monitoring_xapps_included": true,
+    "e2_to_prb_actuator_implemented": false,
+    "new_repository_deployment_validated": false
+  },
+  "control_source_blobs": {
+    "ran_func_mac.c": "4a37130533601f5bb04939fa4be9e25b566a406f",
+    "ran_func_slice.c": "58a39a494303e133d749073acd4d15eb8fc96856",
+    "ran_func_rc.c": "8ab3e431af76b0421ed04a7e80bda82d5c7d8f36"
+  }
+}

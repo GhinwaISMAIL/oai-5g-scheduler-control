@@ -14,7 +14,7 @@ Examples:
   bash bin/mgen-run-distributed.sh ghinwa@pc816.emulab.net ghinwa@pc03-meb.emulab.net 1 all quick
 
 Optional environment variables:
-  UES_PER_CELL=12  RATE=10  SIZE=1000  DURATION=5  WARMUP=2  MGEN_DRAIN_SECONDS=15
+  UES_PER_CELL=2  RATE=10  SIZE=1000  DURATION=5  WARMUP=2  MGEN_DRAIN_SECONDS=15
 
 RATE is packets/second and SIZE is bytes/packet. The defaults generate about
 80 kbit/s per active flow and are intended as a safe preflight load.
@@ -33,7 +33,7 @@ CELL=$3
 UE_SPEC=${4:-all}
 MODE=${5:-full}
 
-UES_PER_CELL=${UES_PER_CELL:-12}
+UES_PER_CELL=${UES_PER_CELL:-2}
 RATE=${RATE:-10}
 SIZE=${SIZE:-1000}
 DURATION=${DURATION:-5}

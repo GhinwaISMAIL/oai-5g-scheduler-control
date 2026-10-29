@@ -16,8 +16,14 @@
 set +e
 
 CELL_IDX="${1:-1}"
-NUM_CELLS="${2:-2}"
-UES_PER_CELL="${3:-12}"
+NUM_CELLS="${2:-1}"
+UES_PER_CELL="${3:-2}"
+
+if [ "$CELL_IDX" != 1 ] || [ "$NUM_CELLS" != 1 ]; then
+    echo "ERROR: this repository supports exactly one cell (cell1)" >&2
+    exit 2
+fi
+[[ "$UES_PER_CELL" =~ ^[1-9][0-9]*$ ]] || { echo "ERROR: invalid UE count" >&2; exit 2; }
 
 CORE_LAN_IP="10.10.1.1"
 CELL_LAN_IP="10.10.1.$((10 + CELL_IDX))"
@@ -116,8 +122,8 @@ echo "[CELL${CELL_IDX}] Core reachable."
 # ------------------------------------------------------------------ #
 # 4. Pull images
 # ------------------------------------------------------------------ #
-docker pull ghinwa555/oai-gnb-e2-chan:v2
-docker pull ghinwa555/oai-nr-ue-chan:v2
+docker pull ghinwa555/oai-gnb-e2-chan@sha256:1bc3c341b498fdc2096721bd0b86f5bdd3ca985a930617163c611db5a9bc5501
+docker pull ghinwa555/oai-nr-ue-chan@sha256:f00af9714f0e953c79d8e4def6b71d15d9af2c504bca1e0a8db2edbb59d6fb60
 
 # ------------------------------------------------------------------ #
 # 5. Generate this cell's gNB config
@@ -158,7 +164,7 @@ cat > "${COMPOSE}" <<EOF
 services:
   oai-gnb:
     container_name: ric5g-gnb-cell${CELL_IDX}
-    image: ghinwa555/oai-gnb-e2-chan:v2
+    image: ghinwa555/oai-gnb-e2-chan@sha256:1bc3c341b498fdc2096721bd0b86f5bdd3ca985a930617163c611db5a9bc5501
     network_mode: host
     cap_drop:
       - ALL
@@ -190,7 +196,7 @@ for u in $(seq 1 "${UES_PER_CELL}"); do
 
   oai-nr-ue${u}:
     container_name: ric5g-ue-cell${CELL_IDX}-${u}
-    image: ghinwa555/oai-nr-ue-chan:v2
+    image: ghinwa555/oai-nr-ue-chan@sha256:f00af9714f0e953c79d8e4def6b71d15d9af2c504bca1e0a8db2edbb59d6fb60
     cap_drop:
       - ALL
     cap_add:
