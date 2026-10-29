@@ -78,8 +78,10 @@ static bool ctrl_commit(const nr_dl_sched_params_t *params, nr_dl_candidate_t *c
   cand->sched_pdsch.rbStart = rb_start;
   cand->sched_pdsch.rbSize = rb_size;
   cand->sched_pdsch.mcs = mcs;
-  if (!commit_alloc(params, cand))
+  if (!commit_alloc(params, cand)) {
+    nr_ctrl_note_commit_fail(&g_state, cand->rnti);
     return false;
+  }
   cand->scheduled = true;
   return true;
 }
@@ -264,6 +266,12 @@ static int ctrl_wshare_group(const nr_dl_sched_params_t *params, nr_dl_candidate
     demand[i] = d;
   }
   nr_ctrl_split(n, weight, demand, NR_CTRL_MIN_RB, free_rb, out);
+  g_state.ws_groups++;
+  g_state.ws_free_rb += (uint64_t)free_rb;
+  for (int i = 0; i < n; i++) {
+    g_state.ws_demand_rb += (uint64_t)demand[i];
+    g_state.ws_planned_rb += (uint64_t)out[i];
+  }
 
   int cursor = start;
   for (int i = 0; i < n; i++) {
@@ -271,6 +279,7 @@ static int ctrl_wshare_group(const nr_dl_sched_params_t *params, nr_dl_candidate
       continue;
     if (ctrl_commit(params, grp[i], cursor, out[i], grp[i]->sched_pdsch.mcs)) {
       nr_ctrl_account(&g_state, grp[i]->rnti, out[i]);
+      g_state.ws_committed_rb += (uint64_t)out[i];
       cursor += out[i];
       n_sched++;
       if (n_sched >= params->max_num_ue)
@@ -320,14 +329,19 @@ int nr_dl_ctrl_policy(const nr_dl_sched_params_t *params, nr_dl_candidate_t *can
   if (g_state.policy == NR_CTRL_POLICY_PF)
     return nr_dl_proportional_fair(params, candidates, n_candidates);
 
-  int n_sched = ctrl_serve_mandatory(params, candidates, n_candidates, 0);
-  if (n_sched >= params->max_num_ue)
-    return n_sched;
+  int n_mandatory = ctrl_serve_mandatory(params, candidates, n_candidates, 0);
+  if (n_mandatory >= params->max_num_ue)
+    return n_mandatory;
+  int n_sched;
   if (g_state.policy == NR_CTRL_POLICY_RR)
-    return ctrl_sequential(params, candidates, n_candidates, n_sched, false);
-  if (g_state.policy == NR_CTRL_POLICY_WRR)
-    return ctrl_sequential(params, candidates, n_candidates, n_sched, true);
-  return ctrl_wshare(params, candidates, n_candidates, n_sched);
+    n_sched = ctrl_sequential(params, candidates, n_candidates, n_mandatory, false);
+  else if (g_state.policy == NR_CTRL_POLICY_WRR)
+    n_sched = ctrl_sequential(params, candidates, n_candidates, n_mandatory, true);
+  else
+    n_sched = ctrl_wshare(params, candidates, n_candidates, n_mandatory);
+  if (n_sched - n_mandatory >= 2)
+    g_state.multi_ue_slots++;
+  return n_sched;
 }
 
 static void *ctrl_thread(void *arg)

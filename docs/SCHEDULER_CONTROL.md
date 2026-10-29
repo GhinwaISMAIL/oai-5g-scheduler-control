@@ -75,23 +75,26 @@ Done (`gnb/test`, `tests/test_scheduler_control.py`):
 - The policy runs for thousands of slots against copies of the gNB scheduler helpers (`find_largest_free_block` and `get_rb_alloc` are the pinned code): 3:1 weights give 3:1 resource blocks with every block used, equal weights give 1:1, a cap is honoured, a small backlog frees capacity for the other UE, retransmissions are served first with their exact size, round robin alternates strictly, and a failed commit leaves no gap or accounting.
 - The same program runs under ThreadSanitizer, AddressSanitizer and UBSan with a control thread issuing commands while slots are scheduled.
 
-Live results so far (single cell, two UEs, 15 Mbit/s UDP downlink offered to each through the UPF, 20 s windows, counters read from the gNB):
+Live results so far (single cell, two UEs, 15 Mbit/s UDP downlink offered to each through the UPF, 20 s windows, counters read from the gNB; weights 3000 : 1000 where given):
 
-| Policy | Resource-block share UE1 / UE2 | Cell total |
-| --- | --- | --- |
-| `pf` | 49.6 / 50.4 % | 24.1 Mbit/s |
-| `wshare`, equal weights | 50.0 / 50.0 % | 17.5 Mbit/s |
-| `wshare`, 3000 : 1000 | 75.5 / 24.5 % (13.2 / 4.4 Mbit/s) | 17.5 Mbit/s |
-| `wshare`, UE1 cap 30 | 28.7 / 71.3 % (30 of 106 is 28.3 %) | 17.6 Mbit/s |
+| Policy | Resource-block share UE1 / UE2 | Cell total | Resource blocks per scheduler call |
+| --- | --- | --- | --- |
+| `pf` | 50.0 / 50.0 % | 24.4 Mbit/s | 104.9 |
+| `wrr` | 74.7 / 25.3 % (17.5 / 6.6 Mbit/s) | 24.1 Mbit/s | 104.9 |
+| `wshare` | 75.5 / 24.5 % (13.3 / 4.4 Mbit/s) | 17.7 Mbit/s | 78.3 |
+| `rr` | 48.6 / 51.4 % | 24.3 Mbit/s | 104.9 |
 
-The shares follow the settings. The cell total, however, is about 27 % lower with
-`wshare` than with `pf`, independent of the weights: the policy is called about a
-quarter less often per second while using the same number of resource blocks per
-call. The likely cause is that serving two UEs in every slot makes each slot more
-expensive for the RF simulator, so it completes fewer slots per second. That is a
-property of this simulated setup, not of a radio, and it is the reason for `wrr`,
-which shares by time slot and keeps one UE per slot. Whether `wrr` recovers the
-total has to be measured (`sched-ctl.py measure` prints the call rate).
+A cap of 30 on one UE gave it 28.7 % of the resource blocks (30 of 106 is 28.3 %).
+The receivers inside the UEs agree with the gNB counters on who got the larger share.
+
+Known defect: `wshare` uses only about 74 % of the resource blocks of each slot
+(78 of 106), so the cell total falls by the same fraction regardless of the
+weights; the scheduler is called equally often in every policy, so this is not a
+slower simulator. The cause is not established. The controller counts refused
+grants (`commit_fail`), the demand it sees and what it plans and commits per call
+(`sched-ctl.py status` and `measure`), to tell a refused second grant in the same
+slot from a demand shortfall. Until that is resolved use `wrr` to enforce shares
+without losing capacity.
 
 Not done yet, and required before relying on it:
 

@@ -397,7 +397,7 @@ static void test_policy(void)
   CHECK(sim_slot(2, 4) == 2);
   CHECK(cands[0].sched_pdsch.rbSize == NR_CTRL_MIN_RB && cands[1].sched_pdsch.rbSize == NR_CTRL_MIN_RB);
 
-  /* a failed commit does not leave a hole or get accounted */
+  /* a failed commit does not leave a hole or get accounted, and is counted */
   ctl("RESET", r, sizeof(r));
   ctl("POLICY wshare", r, sizeof(r));
   stub_commit_fail_rnti = 0x1001;
@@ -405,6 +405,9 @@ static void test_policy(void)
   sim_slot(2, 4);
   stub_commit_fail_rnti = 0;
   CHECK(!cands[0].scheduled && cands[1].scheduled);
+  ctl("GET", r, sizeof(r));
+  CHECK(strstr(r, "commit_fail=1 multi_ue_slots=0"));
+  CHECK(strstr(r, "ws_groups=1 ws_free_rb=106"));
 
   /* weighted round robin: one UE per slot, resource blocks follow the weights */
   ctl("RESET", r, sizeof(r));

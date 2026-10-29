@@ -62,7 +62,7 @@ def parse_status(text):
         if line.startswith("UE "):
             ue = _kv(line.split())
             ue["rnti"] = int(ue["rnti"], 16)
-            for key in ("weight", "explicit", "cap", "granted_rbs", "granted_slots", "mac_dl_rbs", "mac_dl_rbs_retx", "mac_dl_sdu_bytes"):
+            for key in ("weight", "explicit", "cap", "granted_rbs", "granted_slots", "commit_fail", "mac_dl_rbs", "mac_dl_rbs_retx", "mac_dl_sdu_bytes"):
                 ue[key] = int(ue[key])
             ues.append(ue)
     return header, ues
@@ -75,6 +75,10 @@ def get_status(**kw):
 def print_status(header, ues, out=sys.stdout):
     print(f"version={header['version']} policy={header['policy']} default_weight={header['default_weight']} "
           f"min_rb={header['min_rb']} scheduler_calls={header['calls']}", file=out)
+    if int(header.get("ws_groups", 0)) or int(header.get("commit_fail", 0)):
+        print(f"diagnostics: commit_fail={header['commit_fail']} multi_ue_slots={header['multi_ue_slots']} "
+              f"wshare groups={header['ws_groups']} free_rb={header['ws_free_rb']} demand_rb={header['ws_demand_rb']} "
+              f"planned_rb={header['ws_planned_rb']} committed_rb={header['ws_committed_rb']}", file=out)
     print(f"{'rnti':<8}{'weight':>8}{'set':>5}{'cap':>6}{'granted_rbs':>14}{'mac_dl_rbs':>12}{'retx_rbs':>10}{'dl_sdu_bytes':>14}", file=out)
     for u in ues:
         print(f"0x{u['rnti']:04x}  {u['weight']:>8}{u['explicit']:>5}{u['cap']:>6}{u['granted_rbs']:>14}"
@@ -119,6 +123,13 @@ def cmd_measure(seconds, **kw):
         print(f"0x{rnti:04x}  {rbs:>12}{share:>9.1f}{retx:>10}{byt:>12}{byt * 8 / seconds / 1e6:>9.2f}")
     agg = sum(r[3] for r in rows) * 8 / seconds / 1e6
     calls = int(h1["calls"]) - int(h0["calls"])
+    if h1["version"] == h0["version"] and int(h1.get("ws_groups", 0)) > int(h0.get("ws_groups", 0)):
+        d = {k: int(h1[k]) - int(h0[k]) for k in ("commit_fail", "multi_ue_slots", "ws_groups", "ws_free_rb", "ws_demand_rb", "ws_planned_rb", "ws_committed_rb")}
+        g = d["ws_groups"]
+        print(f"wshare per call: free {d['ws_free_rb'] / g:.1f} demand {d['ws_demand_rb'] / g:.1f} planned {d['ws_planned_rb'] / g:.1f} "
+              f"committed {d['ws_committed_rb'] / g:.1f} RBs; commit_fail {d['commit_fail']}, multi-UE calls {d['multi_ue_slots']} of {g}")
+    elif h1["version"] == h0["version"] and int(h1["commit_fail"]) > int(h0["commit_fail"]):
+        print(f"commit_fail {int(h1['commit_fail']) - int(h0['commit_fail'])}, multi-UE calls {int(h1['multi_ue_slots']) - int(h0['multi_ue_slots'])}")
     if calls > 0 and h1["version"] == h0["version"]:
         print(f"total: {agg:.2f} Mbit/s, {total / seconds:.0f} RBs/s, scheduler calls {calls / seconds:.0f}/s, {total / calls:.1f} RBs per call")
     else:

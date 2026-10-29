@@ -85,6 +85,14 @@ void nr_ctrl_account(nr_ctrl_state_t *st, uint16_t rnti, int rbs)
   u->granted_slots++;
 }
 
+void nr_ctrl_note_commit_fail(nr_ctrl_state_t *st, uint16_t rnti)
+{
+  st->commit_fail++;
+  nr_ctrl_ue_t *u = get_or_add(st, rnti);
+  if (u)
+    u->commit_fail++;
+}
+
 void nr_ctrl_prune(nr_ctrl_state_t *st, const nr_ctrl_ue_view_t *ues, int n_ues)
 {
   int w = 0;
@@ -148,17 +156,25 @@ static int reply_status(const nr_ctrl_state_t *st, const nr_ctrl_ue_view_t *ues,
 {
   int len = snprintf(reply,
                      size,
-                     "OK version=%u policy=%s default_weight=%u min_rb=%d calls=%llu\n",
+                     "OK version=%u policy=%s default_weight=%u min_rb=%d calls=%llu commit_fail=%llu multi_ue_slots=%llu "
+                     "ws_groups=%llu ws_free_rb=%llu ws_demand_rb=%llu ws_planned_rb=%llu ws_committed_rb=%llu\n",
                      (unsigned)st->version,
                      nr_ctrl_policy_name(st->policy),
                      (unsigned)st->default_weight,
                      NR_CTRL_MIN_RB,
-                     (unsigned long long)st->calls);
+                     (unsigned long long)st->calls,
+                     (unsigned long long)st->commit_fail,
+                     (unsigned long long)st->multi_ue_slots,
+                     (unsigned long long)st->ws_groups,
+                     (unsigned long long)st->ws_free_rb,
+                     (unsigned long long)st->ws_demand_rb,
+                     (unsigned long long)st->ws_planned_rb,
+                     (unsigned long long)st->ws_committed_rb);
   for (int k = 0; k < n_ues && len > 0 && (size_t)len < size; k++) {
     const nr_ctrl_ue_t *u = find_ue(st, ues[k].rnti);
     len += snprintf(reply + len,
                     size - (size_t)len,
-                    "UE rnti=0x%04x weight=%u explicit=%d cap=%d granted_rbs=%llu granted_slots=%llu "
+                    "UE rnti=0x%04x weight=%u explicit=%d cap=%d granted_rbs=%llu granted_slots=%llu commit_fail=%llu "
                     "mac_dl_rbs=%llu mac_dl_rbs_retx=%llu mac_dl_sdu_bytes=%llu\n",
                     ues[k].rnti,
                     (unsigned)nr_ctrl_weight_of(st, ues[k].rnti),
@@ -166,6 +182,7 @@ static int reply_status(const nr_ctrl_state_t *st, const nr_ctrl_ue_view_t *ues,
                     u ? u->cap : 0,
                     (unsigned long long)(u ? u->granted_rbs : 0),
                     (unsigned long long)(u ? u->granted_slots : 0),
+                    (unsigned long long)(u ? u->commit_fail : 0),
                     (unsigned long long)ues[k].mac_dl_rbs,
                     (unsigned long long)ues[k].mac_dl_rbs_retx,
                     (unsigned long long)ues[k].mac_dl_sdu_bytes);
