@@ -18,7 +18,7 @@ need a MAC control element are served first in every mode, as in the stock polic
 | `pf` | The stock proportional-fair policy, unchanged. This is the default after start and after `reset`. |
 | `rr` | Time-domain round robin: backlogged UEs in RNTI order, each takes what it needs from the largest free block, so normally one UE per slot. |
 | `wrr` | Weighted round robin in the time domain: the UE with the fewest granted resource blocks per unit of weight takes the slot, so resource-block shares follow the weights while each slot normally serves one UE (as `pf` does). |
-| `wshare` | Frequency-domain weighted share: the largest free block of every slot is divided between all UEs with downlink data in proportion to their weights, never giving a UE more than it can use, never less than 5 resource blocks, and handing unused share to the others. |
+| `wshare` | Weighted share of the largest free block among all UEs with downlink data, at least 5 resource blocks each, unused share handed to the others, in as many slots as the gNB accepts. In the other slots one UE at a time takes the slot, least served relative to its weight first, so the long-run split follows the weights either way. See the section on the acknowledgement limit below. |
 
 Per-UE settings (not used by `pf`):
 
@@ -87,25 +87,29 @@ Live results so far (single cell, two UEs, 15 Mbit/s UDP downlink offered to eac
 A cap of 30 on one UE gave it 28.7 % of the resource blocks (30 of 106 is 28.3 %).
 The receivers inside the UEs agree with the gNB counters on who got the larger share.
 
-Open issue: in the first live runs `wshare` used only about 74 % of the resource
-blocks of each slot (78 of 106), so the cell total fell by the same fraction
-regardless of the weights. The scheduler is called equally often in every policy,
-so this is not a slower simulator. The counters showed demand above the free block
-and a plan equal to it, but only about 75 % of the planned blocks committed: the
-grants were refused by the gNB's own validation (PDCCH candidate or ACK/NACK
-occasion), in pairs, when both UEs were granted in the same slot.
+The acknowledgement limit. Measured on the live gNB (two UEs, saturated downlink):
+a `wshare` that split every slot between both UEs used only 74 to 78 % of the
+resource blocks (17.2 to 18.1 Mbit/s against 24.0 with `pf`). 94 % of the refused
+grants were refused for lack of an ACK/NACK occasion (PUCCH), only 6 % for lack of
+a PDCCH candidate, and they fell in a handful of slot indices of the frame: in the
+last downlink slots before the uplink slots almost every grant to either UE was
+refused. The MAC accepts only a limited number of grants per UE for each
+acknowledgement occasion; granting both UEs in every slot spends that allowance
+before the end of the period and the remaining slots are lost for everybody.
+`pf` and `wrr` give one UE the whole slot and so need one grant per slot.
 
-`wshare` now grants the UEs one after the other. Each share is the weighted
-max-min share of what is still free among the UEs not yet handled, so a refused
-grant leaves its share to the following UEs, and when the last UE is refused the
-freed tail is added to the UE granted before it, up to that UE's demand. Refusals
-are counted by cause (`fail_cce`, `fail_pucch`) and by slot index in the frame
-(`sched-ctl.py status` and `measure`). This change is verified only against the
-host-side model, which can refuse a grant on request; it must be measured on the
-live gNB (cell total close to `pf`, shares following the weights) before it is
-considered fixed. If the cell total is still low, the per-slot refusal table shows
-in which slots the grants are refused. Until then use `wrr` to enforce shares
-without losing capacity.
+`wshare` therefore shares a slot in frequency only in a fraction of the contested
+slots and gives the others to one UE at a time. The fraction starts at 50 %, drops
+by 6 % points when every grant of a slot was refused, by 2 % points when a grant was
+refused, grows by 0.2 % points per clean shared slot, and never goes below 2 %.
+`status` and `measure` show how many slots were shared, how many went to one UE, how
+many lost every grant and the current fraction, plus the refusals by cause and by
+slot index. A consequence of the limit: weights cannot be followed beyond what the
+allowance permits. With an allowance of 5 grants per UE in 7 slots a UE can hold at
+most 5/7 of the slots (71 %), so a 3:1 weight ratio is met as 71:29. This is
+verified against a host-side model of the allowance; the live gNB measurement is
+still to be done (cell total close to `pf`, shares following the weights as far as
+the allowance allows). `wrr` remains the choice for time-multiplexed weights.
 
 Not done yet, and required before relying on it:
 

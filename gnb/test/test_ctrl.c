@@ -258,9 +258,11 @@ static void sim_slot_prepare(int n_ue, uint32_t pending)
   }
 }
 
+static int sim_slot_no;
+
 static int sim_slot(int n_ue, int max_ue)
 {
-  nr_dl_sched_params_t p = {.mac = &mac, .max_num_ue = max_ue, .num_beams = 1};
+  nr_dl_sched_params_t p = {.mac = &mac, .max_num_ue = max_ue, .num_beams = 1, .slot = sim_slot_no};
   p.vrb_map[0] = vrb[0];
   p.n_rb_avail[0] = NSLOT_RB;
   NR_SCHED_LOCK(&mac.sched_lock);
@@ -305,6 +307,84 @@ static void start_endpoint(void)
   }
 }
 
+
+static long get_field(const char *r, const char *key)
+{
+  const char *p = strstr(r, key);
+  return p ? strtol(p + strlen(key), NULL, 10) : -1;
+}
+
+/* Saturated downlink for two UEs where the MAC accepts only `budget` grants per UE
+ * in each group of `period` slots (the ACK/NACK allowance).  Reports, for the second
+ * half of the run, the share of resource blocks used and UE 1's part of them. */
+static void run_budget(int budget, int period, int nslots, long w1, long w2, double *util, double *share1, long *lost, long *share_milli)
+{
+  char r[4096], cmd[64];
+  ctl("RESET", r, sizeof(r));
+  ctl("POLICY wshare", r, sizeof(r));
+  snprintf(cmd, sizeof(cmd), "WEIGHT 1001 %ld", w1);
+  ctl(cmd, r, sizeof(r));
+  snprintf(cmd, sizeof(cmd), "WEIGHT 1002 %ld", w2);
+  ctl(cmd, r, sizeof(r));
+  stub_ack_budget = budget;
+  stub_ack_period = period;
+  stub_ack_reset();
+  double used = 0, a = 0, b = 0;
+  int counted = 0;
+  for (int s = 0; s < nslots; s++) {
+    sim_slot_no = s;
+    sim_slot_prepare(2, 1000000);
+    sim_slot(2, 4);
+    if (s >= nslots / 2) {
+      counted++;
+      for (int i = 0; i < 2; i++)
+        if (cands[i].scheduled) {
+          used += cands[i].sched_pdsch.rbSize;
+          if (i == 0)
+            a += cands[i].sched_pdsch.rbSize;
+          else
+            b += cands[i].sched_pdsch.rbSize;
+        }
+    }
+  }
+  stub_ack_budget = 0;
+  stub_ack_period = 0;
+  sim_slot_no = 0;
+  ctl("GET", r, sizeof(r));
+  *util = used / ((double)counted * NSLOT_RB);
+  *share1 = a / (a + b);
+  *lost = get_field(r, "ws_lost_slots=");
+  *share_milli = get_field(r, "ws_share_milli=");
+}
+
+static void test_budget(void)
+{
+  double util, share1;
+  long lost, milli;
+
+  /* allowance of 5 grants per UE in 7 slots: two UEs can have at most three shared slots */
+  run_budget(5, 7, 14000, 1000, 1000, &util, &share1, &lost, &milli);
+  CHECK(util > 0.9);
+  CHECK(fabs(share1 - 0.5) < 0.03);
+  CHECK(milli < 800); /* sharing every slot would not fit */
+  /* weights 3:1 ask for 75 % but a UE can hold at most 5 of 7 slots (71 %) with that allowance */
+  run_budget(5, 7, 14000, 3000, 1000, &util, &share1, &lost, &milli);
+  CHECK(util > 0.9);
+  CHECK(fabs(share1 - 5.0 / 7.0) < 0.02);
+
+  /* no effective limit: the slot stays shared and nothing is lost */
+  run_budget(7, 7, 6000, 1000, 1000, &util, &share1, &lost, &milli);
+  CHECK(lost == 0 && util > 0.999 && milli > 900);
+  CHECK(fabs(share1 - 0.5) < 0.01);
+  run_budget(7, 7, 6000, 3000, 1000, &util, &share1, &lost, &milli);
+  CHECK(fabs(share1 - 0.75) < 0.02);
+
+  /* allowance too small to cover every slot: no crash, most slots still used */
+  run_budget(3, 7, 14000, 1000, 1000, &util, &share1, &lost, &milli);
+  CHECK(util > 0.78 && util < 0.87);
+  CHECK(milli >= NR_CTRL_WS_SHARE_MIN);
+}
+
 static void test_policy(void)
 {
   char r[4096];
@@ -331,7 +411,7 @@ static void test_policy(void)
   int slots = 2000;
   for (int s = 0; s < slots; s++) {
     sim_slot_prepare(2, 1000000);
-    CHECK(sim_slot(2, 4) == 2);
+    CHECK(sim_slot(2, 4) >= 1);
   }
   double g1 = ues[0].mac_stats.dl.total_rbs - b1, g2 = ues[1].mac_stats.dl.total_rbs - b2;
   CHECK(fabs(g1 / g2 - 3.0) < 0.1);
@@ -555,6 +635,7 @@ int main(void)
   test_split_properties();
   test_protocol();
   test_policy();
+  test_budget();
   test_second_instance();
   test_many_ues();
   test_concurrency();

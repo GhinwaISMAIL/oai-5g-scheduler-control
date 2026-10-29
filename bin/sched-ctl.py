@@ -85,9 +85,11 @@ def print_status(header, ues, out=sys.stdout):
               f"multi_ue_slots={header['multi_ue_slots']} "
               f"wshare groups={header['ws_groups']} free_rb={header['ws_free_rb']} demand_rb={header['ws_demand_rb']} "
               f"planned_rb={header['ws_planned_rb']} committed_rb={header['ws_committed_rb']}", file=out)
-    if header["slots"]:
-        print("refused grants by slot index in the frame (calls / refused): "
-              + "  ".join(f"{i}:{c}/{f}" for i, c, f in header["slots"] if f))
+        print(f"wshare slots: shared {header['ws_shared_slots']}, one UE at a time {header['ws_single_slots']}, "
+              f"all grants refused {header['ws_lost_slots']}; sharing now in {int(header['ws_share_milli']) / 10:.0f}% of the contested slots", file=out)
+    if any(f for _, _, f in header["slots"]):
+        print("grants by slot index in the frame (calls/refused): "
+              + "  ".join(f"{i}:{c}/{f}" for i, c, f in header["slots"]), file=out)
     print(f"{'rnti':<8}{'weight':>8}{'set':>5}{'cap':>6}{'granted_rbs':>14}{'mac_dl_rbs':>12}{'retx_rbs':>10}{'dl_sdu_bytes':>14}", file=out)
     for u in ues:
         print(f"0x{u['rnti']:04x}  {u['weight']:>8}{u['explicit']:>5}{u['cap']:>6}{u['granted_rbs']:>14}"
@@ -137,6 +139,17 @@ def cmd_measure(seconds, **kw):
         g = d["ws_groups"]
         print(f"wshare per call: free {d['ws_free_rb'] / g:.1f} demand {d['ws_demand_rb'] / g:.1f} planned {d['ws_planned_rb'] / g:.1f} "
               f"committed {d['ws_committed_rb'] / g:.1f} RBs; commit_fail {d['commit_fail']}, multi-UE calls {d['multi_ue_slots']} of {g}")
+        mode = {k: int(h1[k]) - int(h0[k]) for k in ("ws_shared_slots", "ws_single_slots", "ws_lost_slots")}
+        print(f"wshare slots in window: shared {mode['ws_shared_slots']}, one UE at a time {mode['ws_single_slots']}, "
+              f"all grants refused {mode['ws_lost_slots']}; sharing now in {int(h1['ws_share_milli']) / 10:.0f}% of the contested slots")
+        old = {i: (c, f) for i, c, f in h0["slots"]}
+        cells = []
+        for i, c, f in h1["slots"]:
+            c0, f0 = old.get(i, (0, 0))
+            if c - c0 > 0:
+                cells.append(f"{i}:{c - c0}/{f - f0}")
+        if cells:
+            print("per slot index in window (calls/refused grants): " + "  ".join(cells))
     elif h1["version"] == h0["version"] and int(h1["commit_fail"]) > int(h0["commit_fail"]):
         print(f"commit_fail {int(h1['commit_fail']) - int(h0['commit_fail'])}, multi-UE calls {int(h1['multi_ue_slots']) - int(h0['multi_ue_slots'])}")
     if calls > 0 and h1["version"] == h0["version"]:

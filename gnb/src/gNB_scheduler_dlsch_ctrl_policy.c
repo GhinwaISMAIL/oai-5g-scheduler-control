@@ -340,6 +340,67 @@ static int ctrl_wshare(const nr_dl_sched_params_t *params, nr_dl_candidate_t *ca
   return n_sched;
 }
 
+/* wshare.  Giving each of two UEs a part of the slot costs two grants where one
+ * would do, and the MAC accepts only a limited number of grants per UE for
+ * the ACK/NACK occasion that follows; sharing every slot uses that allowance up
+ * before the last downlink slots of the period and those are lost for everybody.
+ * The policy therefore shares a slot in frequency only in a fraction of the
+ * slots and gives the other slots to one UE at a time, least served relative to
+ * its weight first (the long-run split then follows the weights either way).
+ * The fraction is tuned from what the MAC accepts: a slot in which every grant
+ * was refused lowers it a lot, a refused grant a little, a clean shared slot
+ * raises it slowly, and it never drops to zero so that the limit keeps being
+ * probed. */
+static int ctrl_wshare_adaptive(const nr_dl_sched_params_t *params, nr_dl_candidate_t *candidates, int n_candidates, int n_sched)
+{
+  int npool = 0;
+  FOR_EACH_CANDIDATE(c, candidates, n_candidates)
+  if (is_new_data(c))
+    npool++;
+  if (npool == 0)
+    return n_sched;
+
+  bool shared = false;
+  if (npool >= 2) {
+    g_state.ws_acc += g_state.ws_share_milli;
+    if (g_state.ws_acc >= 1000) {
+      g_state.ws_acc -= 1000;
+      shared = true;
+    }
+  }
+
+  const uint64_t fail_before = g_state.commit_fail;
+  const int sched_before = n_sched;
+  if (shared)
+    n_sched = ctrl_wshare(params, candidates, n_candidates, n_sched);
+  else
+    n_sched = ctrl_sequential(params, candidates, n_candidates, n_sched, true);
+  if (npool < 2)
+    return n_sched;
+
+  const int got = n_sched - sched_before;
+  const uint64_t fails = g_state.commit_fail - fail_before;
+  int share = (int)g_state.ws_share_milli;
+  if (shared)
+    g_state.ws_shared_slots++;
+  else
+    g_state.ws_single_slots++;
+  if (got == 0 && fails > 0) {
+    g_state.ws_lost_slots++;
+    share -= 60;
+  } else if (fails > 0) {
+    share -= 20;
+  } else if (shared && got >= 2) {
+    share += 2;
+  }
+  if (share < NR_CTRL_WS_SHARE_MIN)
+    share = NR_CTRL_WS_SHARE_MIN;
+  if (share > 1000)
+    share = 1000;
+  g_state.ws_share_milli = (uint32_t)share;
+  return n_sched;
+}
+
 int nr_dl_ctrl_policy(const nr_dl_sched_params_t *params, nr_dl_candidate_t *candidates, int n_candidates)
 {
   /* called with the scheduler lock held */
@@ -364,7 +425,7 @@ int nr_dl_ctrl_policy(const nr_dl_sched_params_t *params, nr_dl_candidate_t *can
   else if (g_state.policy == NR_CTRL_POLICY_WRR)
     n_sched = ctrl_sequential(params, candidates, n_candidates, n_mandatory, true);
   else
-    n_sched = ctrl_wshare(params, candidates, n_candidates, n_mandatory);
+    n_sched = ctrl_wshare_adaptive(params, candidates, n_candidates, n_mandatory);
   if (n_sched - n_mandatory >= 2)
     g_state.multi_ue_slots++;
   return n_sched;

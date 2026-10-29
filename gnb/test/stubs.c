@@ -7,11 +7,21 @@
  */
 #include "LAYER2/NR_MAC_gNB/mac_proto.h"
 #include "gNB_scheduler_dlsch_default_policies.h"
+#include <string.h>
 #include "stubs.h"
 
 int stub_pf_calls;
 uint16_t stub_commit_fail_rnti;
 int stub_fail_is_cce;
+int stub_ack_budget; /* grants per UE per occasion the model accepts (0: unlimited) */
+int stub_ack_period; /* slots per occasion */
+static int ack_occasion = -1;
+static int ack_count[64];
+void stub_ack_reset(void)
+{
+  ack_occasion = -1;
+  memset(ack_count, 0, sizeof(ack_count));
+}
 int stub_bytes_per_rb = 100;
 
 int find_largest_free_block(const uint16_t *vrb_map, uint16_t slbitmap, int bwp_start, int bwp_size, int *out_start)
@@ -79,6 +89,18 @@ bool commit_alloc(const nr_dl_sched_params_t *params, nr_dl_candidate_t *cand)
     if (stub_fail_is_cce)
       cand->UE->UE_sched_ctrl.dl_cce_fail++;
     return false;
+  }
+  if (stub_ack_budget > 0 && stub_ack_period > 0) {
+    int occ = params->slot / stub_ack_period;
+    if (occ != ack_occasion) {
+      ack_occasion = occ;
+      memset(ack_count, 0, sizeof(ack_count));
+    }
+    int ui = cand->rnti & 63;
+    if (ack_count[ui] >= stub_ack_budget)
+      return false;
+    /* the grant takes one of the UE's ACK/NACK positions even if the resource blocks then collide */
+    ack_count[ui]++;
   }
   uint16_t *vrb = params->vrb_map[cand->alloc_beam_idx];
   int s = cand->bwp_start + cand->sched_pdsch.rbStart;

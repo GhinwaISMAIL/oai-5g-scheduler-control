@@ -25,6 +25,8 @@
 #define NR_CTRL_MIN_WEIGHT 1
 #define NR_CTRL_MAX_WEIGHT 1000000
 #define NR_CTRL_DEFAULT_WEIGHT 1000
+#define NR_CTRL_WS_SHARE_INIT 500 /* start: share the slot in half of the slots */
+#define NR_CTRL_WS_SHARE_MIN 20   /* never stop probing: 2 % of the slots */
 #define NR_CTRL_SLOTS 40 /* slot indices tracked (80 slots per frame at most 40 are kept) */
 
 enum { NR_CTRL_POLICY_PF = 0, NR_CTRL_POLICY_RR = 1, NR_CTRL_POLICY_WSHARE = 2, NR_CTRL_POLICY_WRR = 3 };
@@ -56,6 +58,11 @@ typedef struct {
   uint64_t ws_demand_rb;   /* wshare: summed demand of the admitted UEs */
   uint64_t ws_planned_rb;  /* wshare: resource blocks assigned by the split */
   uint64_t ws_committed_rb; /* wshare: resource blocks accepted at commit */
+  uint32_t ws_share_milli;  /* wshare: fraction of slots (in 1/1000) in which the slot is shared in frequency */
+  uint32_t ws_acc;          /* wshare: accumulator that spreads the shared slots evenly */
+  uint64_t ws_shared_slots; /* wshare: slots shared in frequency (two or more UEs competing) */
+  uint64_t ws_single_slots; /* wshare: slots given to one UE at a time (two or more UEs competing) */
+  uint64_t ws_lost_slots;   /* wshare: slots where every grant was refused */
   int n_ue;
   nr_ctrl_ue_t ue[NR_CTRL_MAX_UE];
 } nr_ctrl_state_t;
