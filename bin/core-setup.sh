@@ -150,15 +150,23 @@ docker compose -f docker-compose-core.yaml up -d \
 echo "[CORE] Waiting for AMF..."
 MAX_WAIT=600
 ELAPSED=0
-until docker logs ric5g-oai-amf 2>&1 | grep -q "HTTP2 server started\|Waiting for"; do
+# The AMF image defines a container healthcheck, which is a more stable signal
+# than its log text (the log never contains a fixed "started" line). If an image
+# without a healthcheck is ever used, a running container is accepted instead.
+amf_state() {
+    docker inspect \
+        -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+        ric5g-oai-amf 2> /dev/null
+}
+until state="$(amf_state)"; [ "${state}" = "healthy" ] || [ "${state}" = "running" ]; do
     if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
-        fail "AMF not ready after ${MAX_WAIT}s (docker logs ric5g-oai-amf)"
+        fail "AMF not ready after ${MAX_WAIT}s (state: ${state:-unknown}; see docker logs ric5g-oai-amf)"
     fi
-    echo "[CORE] Waiting for AMF... (${ELAPSED}s)"
+    echo "[CORE] Waiting for AMF... (${ELAPSED}s, state: ${state:-unknown})"
     sleep 10
     ELAPSED=$((ELAPSED + 10))
 done
-echo "[CORE] AMF ready."
+echo "[CORE] AMF ready (state: ${state})."
 
 # Every core container must be running, not merely created.
 EXPECTED="ric5g-mysql ric5g-oai-udr ric5g-oai-udm ric5g-oai-ausf ric5g-oai-amf ric5g-oai-smf ric5g-oai-upf ric5g-oai-ext-dn"

@@ -84,6 +84,12 @@ def test_core_network_starts_before_the_ric_build():
     assert compose_up < build
 
 
+def test_core_amf_readiness_uses_container_health_not_log_text():
+    text = (ROOT / "bin" / "core-setup.sh").read_text()
+    assert "HTTP2 server started" not in text
+    assert "State.Health.Status" in text
+
+
 def test_core_publishes_readiness_only_after_the_ric_is_up():
     text = (ROOT / "bin" / "core-setup.sh").read_text()
     assert text.index('touch "${READY_DIR}/cn-ready"') < text.index("nearRT-RIC > /local/logs")
