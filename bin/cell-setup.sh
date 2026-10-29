@@ -11,6 +11,12 @@
 # Cross-node reachability: the core node's Docker bridges (192.168.71/72.128/26)
 # are reached via a route through the core node's LAN IP, with ip_forward enabled
 # on the core. This is the same hop pattern validated on the OTA track.
+#
+# The gNB is only started once the core node has published ric-ready (see
+# ready-lib.sh). If the core reports a failure, or never becomes ready within
+# READY_TIMEOUT, this script stops without starting the gNB. The script can be
+# re-run on a live reservation; the previous cell containers are removed first.
+# Outcome markers: /local/logs/CELL_READY or /local/logs/CELL_FAILED.
 # =============================================================================
 
 set +e
@@ -32,6 +38,11 @@ AMF_IP="192.168.71.132"
 UPF_IP="192.168.71.134"
 RIC_IP="10.10.1.1"        # the native RIC binds to the core node's LAN IP
 DN_SUBNET="192.168.72.128/26"
+READY_URL="http://${CORE_LAN_IP}:8099"
+READY_TIMEOUT="${READY_TIMEOUT:-3600}"
+
+REPO_DIR="/local/repository"
+. "${REPO_DIR}/bin/ready-lib.sh"
 
 # Per-cell identities. These MUST be unique across cells or the AMF/RIC will
 # reject or confuse the second gNB.
@@ -45,8 +56,17 @@ DOCKER_BRIDGE_CIDR="172.30.${CELL_IDX}.1/24"
 IMSI_BASE=208990100001100
 IMSI_START=$((IMSI_BASE + (CELL_IDX - 1) * UES_PER_CELL))
 
+COMPOSE="docker-compose-cell${CELL_IDX}.yaml"
+
 mkdir -p /local/logs /local/logs/mgen
 chmod 777 /local/logs/mgen
+rm -f /local/logs/CELL_READY /local/logs/CELL_FAILED
+
+fail() {
+    echo "[CELL${CELL_IDX}] ERROR: $*" >&2
+    echo "$*" > /local/logs/CELL_FAILED
+    exit 1
+}
 
 echo "============================================"
 echo "[CELL${CELL_IDX}] started at $(date)"
@@ -55,16 +75,24 @@ echo "[CELL${CELL_IDX}] imsi ${IMSI_START}..$((IMSI_START + UES_PER_CELL - 1))"
 echo "============================================"
 
 # ------------------------------------------------------------------ #
+# 0. Remove containers from a previous run of this script.
+# ------------------------------------------------------------------ #
+if command -v docker > /dev/null 2>&1 && [ -f "${REPO_DIR}/etc/${COMPOSE}" ]; then
+    (cd "${REPO_DIR}/etc" && docker compose -f "${COMPOSE}" down > /dev/null 2>&1)
+fi
+
+# ------------------------------------------------------------------ #
 # 1. Install Docker
 #
 #    FlexRIC's SCTP client advertises every address on the cell host. If every
-#    POWDER node keeps Docker's default 172.17.0.1 address, the RIC sends an
+#    node keeps Docker's default 172.17.0.1 address, the RIC sends an
 #    SCTP heartbeat for a cell to its own local docker0 and the kernel answers
 #    with ABORT, destroying an otherwise healthy E2 association. Configure a
 #    unique default bridge before Docker starts for the first time.
 # ------------------------------------------------------------------ #
 apt-get update -y
-apt-get install -y ca-certificates curl gnupg lsb-release
+apt-get install -y ca-certificates curl gnupg lsb-release \
+    || fail "apt-get install of base packages failed"
 
 install -m 0755 -d /etc/docker
 cat > /etc/docker/daemon.json <<EOF
@@ -73,22 +101,25 @@ cat > /etc/docker/daemon.json <<EOF
 }
 EOF
 
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-    | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-chmod a+r /etc/apt/keyrings/docker.gpg
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-  https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
-  > /etc/apt/sources.list.d/docker.list
-apt-get update -y
-apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+if ! docker compose version > /dev/null 2>&1; then
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+        | gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg \
+        || fail "could not fetch the Docker apt key"
+    chmod a+r /etc/apt/keyrings/docker.gpg
+    echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+      https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" \
+      > /etc/apt/sources.list.d/docker.list
+    apt-get update -y
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin \
+        || fail "Docker installation failed"
+fi
 
 systemctl restart docker
 ACTUAL_DOCKER_BRIDGE="$(ip -4 -o addr show docker0 2>/dev/null | awk '{print $4}')"
 if [ "${ACTUAL_DOCKER_BRIDGE}" != "${DOCKER_BRIDGE_CIDR}" ]; then
-    echo "[CELL${CELL_IDX}] ERROR: docker0=${ACTUAL_DOCKER_BRIDGE:-missing}, expected ${DOCKER_BRIDGE_CIDR}"
-    exit 1
+    fail "docker0=${ACTUAL_DOCKER_BRIDGE:-missing}, expected ${DOCKER_BRIDGE_CIDR}"
 fi
 echo "[CELL${CELL_IDX}] docker0=${ACTUAL_DOCKER_BRIDGE} (unique SCTP address)"
 
@@ -98,32 +129,32 @@ echo "[CELL${CELL_IDX}] docker0=${ACTUAL_DOCKER_BRIDGE} (unique SCTP address)"
 # ------------------------------------------------------------------ #
 echo "[CELL${CELL_IDX}] Adding routes to core bridges via ${CORE_LAN_IP}..."
 sysctl -w net.ipv4.ip_forward=1
-ip route replace 192.168.71.128/26 via ${CORE_LAN_IP}
-ip route replace 192.168.72.128/26 via ${CORE_LAN_IP}
+ip route replace 192.168.71.128/26 via ${CORE_LAN_IP} || fail "route to 192.168.71.128/26 failed"
+ip route replace 192.168.72.128/26 via ${CORE_LAN_IP} || fail "route to 192.168.72.128/26 failed"
 ip route show | grep 192.168.7
 
 # ------------------------------------------------------------------ #
-# 3. Wait for the core: AMF must be reachable before the gNB starts.
+# 3. Wait for the core: it publishes ric-ready once the core network is up and
+#    the RIC is listening. The core build can take a long time, so this waits on
+#    that signal rather than on a fixed delay, and never starts the gNB without it.
 # ------------------------------------------------------------------ #
-echo "[CELL${CELL_IDX}] Waiting for AMF at ${AMF_IP}..."
-MAX_WAIT=900
-ELAPSED=0
-until ping -c1 -W2 "${AMF_IP}" >/dev/null 2>&1; do
-    if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
-        echo "[CELL${CELL_IDX}] WARNING: AMF unreachable after ${MAX_WAIT}s."
-        break
-    fi
-    echo "[CELL${CELL_IDX}] waiting for core... (${ELAPSED}s)"
-    sleep 15
-    ELAPSED=$((ELAPSED + 15))
-done
-echo "[CELL${CELL_IDX}] Core reachable."
+echo "[CELL${CELL_IDX}] Waiting for the core node (up to ${READY_TIMEOUT}s)..."
+wait_for_ready "${READY_URL}/ric-ready" "${READY_URL}/failed" "${READY_TIMEOUT}" 15
+case $? in
+    0) echo "[CELL${CELL_IDX}] Core and RIC report ready." ;;
+    2) fail "core setup reported a failure (see /local/logs/CORE_FAILED on the core node)" ;;
+    *) fail "core not ready after ${READY_TIMEOUT}s (see /local/logs/setup.log on the core node)" ;;
+esac
+ping -c1 -W2 "${AMF_IP}" > /dev/null 2>&1 \
+    || fail "AMF ${AMF_IP} unreachable although the core is ready; check the route and forwarding on the core"
 
 # ------------------------------------------------------------------ #
 # 4. Pull images
 # ------------------------------------------------------------------ #
-docker pull ghinwa555/oai-gnb-e2-chan@sha256:1bc3c341b498fdc2096721bd0b86f5bdd3ca985a930617163c611db5a9bc5501
-docker pull ghinwa555/oai-nr-ue-chan@sha256:f00af9714f0e953c79d8e4def6b71d15d9af2c504bca1e0a8db2edbb59d6fb60
+docker pull ghinwa555/oai-gnb-e2-chan@sha256:1bc3c341b498fdc2096721bd0b86f5bdd3ca985a930617163c611db5a9bc5501 \
+    || fail "gNB image pull failed"
+docker pull ghinwa555/oai-nr-ue-chan@sha256:f00af9714f0e953c79d8e4def6b71d15d9af2c504bca1e0a8db2edbb59d6fb60 \
+    || fail "UE image pull failed"
 
 # ------------------------------------------------------------------ #
 # 5. Generate this cell's gNB config
@@ -132,7 +163,7 @@ docker pull ghinwa555/oai-nr-ue-chan@sha256:f00af9714f0e953c79d8e4def6b71d15d9af
 #    - @include by BARE FILENAME, file co-located (absolute paths fail)
 #    - NGU advertises this node's LAN IP so downlink GTP-U comes back here
 # ------------------------------------------------------------------ #
-cd /local/repository/etc
+cd "${REPO_DIR}/etc" || fail "cannot enter ${REPO_DIR}/etc"
 
 sed -e "s/@CELL_IDX@/${CELL_IDX}/g" \
     -e "s/@GNB_ID@/${GNB_ID}/g" \
@@ -141,15 +172,16 @@ sed -e "s/@CELL_IDX@/${CELL_IDX}/g" \
     -e "s/@AMF_IP@/${AMF_IP}/g" \
     -e "s/@RIC_IP@/${RIC_IP}/g" \
     -e "s/@CELL_LAN_IP@/${CELL_LAN_IP}/g" \
-    gnb-cell.conf.tmpl > gnb-cell${CELL_IDX}.conf
+    gnb-cell.conf.tmpl > gnb-cell${CELL_IDX}.conf || fail "gNB config generation failed"
 
 # The gNB receiver needs rfsimu_channel_ue0..ue(K-1) for uplink connections.
 # Each UE receiver independently activates rfsimu_channel_enB0 (index 0) for
 # downlink. CHANMOD_MODE/TYPE are overridable.
 CHANMOD_MODE="${CHANMOD_MODE:-uniform}"
 CHANMOD_TYPE="${CHANMOD_TYPE:-AWGN}"
-bash /local/repository/bin/gen-channelmod.sh "${UES_PER_CELL}" \
-     "channelmod-cell${CELL_IDX}.conf" "${CHANMOD_MODE}" "${CHANMOD_TYPE}"
+bash "${REPO_DIR}/bin/gen-channelmod.sh" "${UES_PER_CELL}" \
+     "channelmod-cell${CELL_IDX}.conf" "${CHANMOD_MODE}" "${CHANMOD_TYPE}" \
+    || fail "channel model generation failed"
 
 echo "[CELL${CELL_IDX}] gNB config generated:"
 grep -E "gNB_ID|physCellId|nr_cellid|amf_ip|near_ric|options|min_rxtxtime|GNB_IPV4" \
@@ -158,8 +190,6 @@ grep -E "gNB_ID|physCellId|nr_cellid|amf_ip|near_ric|options|min_rxtxtime|GNB_IP
 # ------------------------------------------------------------------ #
 # 6. Generate the compose file (gNB + K UEs)
 # ------------------------------------------------------------------ #
-COMPOSE="docker-compose-cell${CELL_IDX}.yaml"
-
 cat > "${COMPOSE}" <<EOF
 services:
   oai-gnb:
@@ -237,21 +267,24 @@ echo "[CELL${CELL_IDX}] compose generated: ${COMPOSE}"
 # ------------------------------------------------------------------ #
 # 7. mgen must be present (bind-mounted into every UE)
 # ------------------------------------------------------------------ #
-MGEN_BIN="/local/repository/bin/mgen"
+MGEN_BIN="${REPO_DIR}/bin/mgen"
 if [ ! -f "$MGEN_BIN" ] || [ ! -x "$MGEN_BIN" ]; then
-    echo "[CELL${CELL_IDX}] ERROR: $MGEN_BIN missing or not executable. Aborting."
-    exit 1
+    fail "$MGEN_BIN missing or not executable"
 fi
 
 # ------------------------------------------------------------------ #
 # 8. Start the cell
 # ------------------------------------------------------------------ #
-docker compose -f "${COMPOSE}" up -d
+docker compose -f "${COMPOSE}" up -d || fail "docker compose up of the cell failed"
 
 # ------------------------------------------------------------------ #
 # 9. Verify the gNB: chanmod active + E2 connected
+#    These are printed for inspection; whether E2 setup succeeded is confirmed
+#    from the RIC log on the core node.
 # ------------------------------------------------------------------ #
 sleep 45
+docker ps --format '{{.Names}}' | grep -qx "ric5g-gnb-cell${CELL_IDX}" \
+    || fail "gNB container ric5g-gnb-cell${CELL_IDX} is not running (docker logs ric5g-gnb-cell${CELL_IDX})"
 echo "[CELL${CELL_IDX}] chanmod check (expect [OCM] model allocated):"
 docker logs ric5g-gnb-cell${CELL_IDX} 2>&1 | grep -i "OCM" | head -4
 echo "[CELL${CELL_IDX}] E2 check:"
@@ -280,21 +313,27 @@ done
 #     traffic that looks fine but never touched the RAN.
 # ------------------------------------------------------------------ #
 echo "[CELL${CELL_IDX}] Adding DN route (${DN_SUBNET}) via oaitun_ue1..."
+UE_PROBLEMS=""
 for u in $(seq 1 "${UES_PER_CELL}"); do
     C="ric5g-ue-cell${CELL_IDX}-${u}"
     W=0
     until docker exec "$C" ip link show oaitun_ue1 >/dev/null 2>&1; do
         if [ "$W" -ge 120 ]; then
-            echo "[CELL${CELL_IDX}] WARNING: UE${u}: no oaitun_ue1 after 120s — skipping"
+            echo "[CELL${CELL_IDX}] WARNING: UE${u}: no oaitun_ue1 after 120s"
             break
         fi
         sleep 5
         W=$((W + 5))
     done
     if docker exec "$C" ip link show oaitun_ue1 >/dev/null 2>&1; then
-        docker exec "$C" ip route replace ${DN_SUBNET} dev oaitun_ue1 \
-            && echo "[CELL${CELL_IDX}] UE${u}: DN route added" \
-            || echo "[CELL${CELL_IDX}] WARNING: UE${u}: DN route failed"
+        if docker exec "$C" ip route replace ${DN_SUBNET} dev oaitun_ue1; then
+            echo "[CELL${CELL_IDX}] UE${u}: DN route added"
+        else
+            echo "[CELL${CELL_IDX}] WARNING: UE${u}: DN route failed"
+            UE_PROBLEMS="${UE_PROBLEMS} UE${u}(route)"
+        fi
+    else
+        UE_PROBLEMS="${UE_PROBLEMS} UE${u}(no-tunnel)"
     fi
 done
 
@@ -302,3 +341,9 @@ echo "============================================"
 echo "[CELL${CELL_IDX}] completed at $(date)"
 echo "============================================"
 docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+
+if [ -n "${UE_PROBLEMS}" ]; then
+    fail "UEs not ready:${UE_PROBLEMS}"
+fi
+touch /local/logs/CELL_READY
+echo "[CELL${CELL_IDX}] All ${UES_PER_CELL} UEs have a tunnel and a DN route (CELL_READY)."

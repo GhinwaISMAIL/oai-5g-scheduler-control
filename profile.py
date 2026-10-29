@@ -87,12 +87,17 @@ tour.Description(IG.Tour.TEXT,
     "Single-cell OAI 5G SA RFsim with FlexRIC near-RT RIC and channel "
     "modelling. One core node runs the CN + RIC; each cell node runs one "
     "E2-enabled, chanmod-capable gNB with its UEs colocated. Start xApps by hand "
-    "after E2 registration and UE attachment. "
+    "after E2 registration and UE attachment. This profile provides the baseline "
+    "network and telemetry; a per-UE PRB or scheduler-policy actuator is not part "
+    "of it yet (see docs/SCHEDULER_CONTROL.md). "
     "PLMN 208/99, TAC=1, SST=1, DNN=oai.")
 tour.Instructions(IG.Tour.TEXT,
-    "Bring-up is staged: the core node comes up first, then each cell node waits "
-    "for the AMF over the LAN before starting its gNB. Allow ~20-30 min. Check "
-    "/local/logs/setup.log on each node.")
+    "Bring-up is staged: the core node brings up the core network and then builds "
+    "and starts the RIC. The cell node waits for the core to report ready (up to "
+    "60 min) before starting its gNB. Check /local/logs/setup.log on each node. "
+    "Outcome markers: CORE_READY / CORE_FAILED on the core, CELL_READY / "
+    "CELL_FAILED on the cell. To re-run after a repository update, see "
+    "docs/DEPLOYMENT.md.")
 request.addTour(tour)
 
 pc.printRequestRSpec()

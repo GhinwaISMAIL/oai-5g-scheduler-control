@@ -17,6 +17,51 @@ Inspect `/local/logs/setup.log` on both hosts. The inherited setup uses package
 installation, registry pulls and source compilation; local tests do not exercise
 that full deployment. Keep the setup logs if any stage fails.
 
+## Outcome markers
+
+Each setup script ends with a marker file, because the portal's startup status
+only says that the script exited:
+
+| Node | Success | Failure |
+| --- | --- | --- |
+| core | `/local/logs/CORE_READY` | `/local/logs/CORE_FAILED` (contains the reason) |
+| cell1 | `/local/logs/CELL_READY` | `/local/logs/CELL_FAILED` (contains the reason) |
+
+The core serves `cn-ready`, `ric-ready` and `failed` from `/local/ready` on
+`10.10.1.1:8099` (LAN only). The cell waits for `ric-ready` for up to
+`READY_TIMEOUT` seconds (default 3600) and does not start the gNB without it.
+
+## Re-running setup on a live reservation
+
+After pushing a change to the repository, the existing reservation can be
+updated without a new one. Core first, then the cell, because restarting the RIC
+drops the gNB's E2 association and the UE sessions.
+
+On core (working directory `/local/repository`):
+
+```bash
+cd /local/repository && sudo git pull --ff-only
+sudo bash bin/node-setup.sh core 0 1 2 uniform AWGN >> /local/logs/setup.log 2>&1
+ls /local/logs/CORE_READY /local/logs/CORE_FAILED 2>/dev/null
+```
+
+The core network and RIC are restarted. FlexRIC is rebuilt only if the pinned
+commits or `bin/patch-flexric-*.py` changed (stamp: `/opt/oai-src/.ric-build-stamp`).
+Use the same channel arguments as the reservation (`channel_initial_mode`,
+`channel_type`); the defaults above match the profile defaults.
+
+On cell1, once `CORE_READY` exists:
+
+```bash
+cd /local/repository && sudo git pull --ff-only
+sudo bash bin/node-setup.sh cell 1 1 2 uniform AWGN >> /local/logs/setup.log 2>&1
+ls /local/logs/CELL_READY /local/logs/CELL_FAILED 2>/dev/null
+```
+
+The previous cell containers are removed and recreated. This does not pick up
+changes to `profile.py` itself (node types, parameters); those need a new
+reservation.
+
 ## Readiness before traffic
 
 On core:
