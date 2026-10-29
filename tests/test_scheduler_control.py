@@ -74,6 +74,8 @@ def test_client_ping_and_status(server):
 def test_client_policy_weight_cap_and_reset_are_read_back(server):
     r = client(server, "policy", "wshare")
     assert r.returncode == 0 and "policy=wshare" in r.stdout
+    r = client(server, "policy", "wrr")
+    assert r.returncode == 0 and "policy=wrr" in r.stdout
     r = client(server, "weight", "1001", "3000")
     assert r.returncode == 0
     row = [line for line in r.stdout.splitlines() if line.startswith("0x1001")][0].split()
@@ -99,6 +101,7 @@ def test_client_measure_reports_shares_from_counter_deltas(server):
     rows = {line.split()[0]: line.split() for line in r.stdout.splitlines() if line.startswith("0x")}
     assert float(rows["0x1001"][2]) == pytest.approx(75.0, abs=0.1)
     assert float(rows["0x1002"][2]) == pytest.approx(25.0, abs=0.1)
+    assert "total:" in r.stdout
 
 
 def test_client_fails_cleanly_without_a_gnb():

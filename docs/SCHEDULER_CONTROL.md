@@ -17,12 +17,13 @@ need a MAC control element are served first in every mode, as in the stock polic
 | --- | --- |
 | `pf` | The stock proportional-fair policy, unchanged. This is the default after start and after `reset`. |
 | `rr` | Time-domain round robin: backlogged UEs in RNTI order, each takes what it needs from the largest free block, so normally one UE per slot. |
+| `wrr` | Weighted round robin in the time domain: the UE with the fewest granted resource blocks per unit of weight takes the slot, so resource-block shares follow the weights while each slot normally serves one UE (as `pf` does). |
 | `wshare` | Frequency-domain weighted share: the largest free block of every slot is divided between all UEs with downlink data in proportion to their weights, never giving a UE more than it can use, never less than 5 resource blocks, and handing unused share to the others. |
 
 Per-UE settings (not used by `pf`):
 
 - `weight` (1 to 1000000, default 1000): relative share in `wshare`.
-- `cap` (0 or 5 to 275): most resource blocks the UE gets in one slot, `0` = no cap. Applies to `wshare` and `rr`. A cap leaves resource blocks unused when the other UEs cannot take them.
+- `cap` (0 or 5 to 275): most resource blocks the UE gets in one slot, `0` = no cap. Applies to `wshare`, `wrr` and `rr`, and stays set when the policy is changed; `reset` clears it. With `rr` or `wrr` a capped UE leaves the rest of the slot to the next UE. A cap leaves resource blocks unused when the other UEs cannot take them.
 
 Meaning of the numbers: a weight is a share of the resource blocks scheduled
 *among UEs that are backlogged in the same slot*. It is not a guaranteed
@@ -37,7 +38,7 @@ that actually happened.
 cd /local/repository
 python3 bin/sched-ctl.py status                       # policy, weights, caps, counters per UE (RNTI)
 python3 bin/sched-ctl.py map --containers ric5g-ue-cell1-1,ric5g-ue-cell1-2   # which RNTI is which UE
-python3 bin/sched-ctl.py policy wshare
+python3 bin/sched-ctl.py policy wshare                # or wrr, rr, pf
 python3 bin/sched-ctl.py weight 1001 3000             # RNTI in hex, as printed by status
 python3 bin/sched-ctl.py weight 1002 1000
 python3 bin/sched-ctl.py measure --seconds 20         # resource blocks actually scheduled per UE
@@ -73,6 +74,24 @@ Done (`gnb/test`, `tests/test_scheduler_control.py`):
 - The command parser is checked with valid and malformed input, version handling, reset and table limits.
 - The policy runs for thousands of slots against copies of the gNB scheduler helpers (`find_largest_free_block` and `get_rb_alloc` are the pinned code): 3:1 weights give 3:1 resource blocks with every block used, equal weights give 1:1, a cap is honoured, a small backlog frees capacity for the other UE, retransmissions are served first with their exact size, round robin alternates strictly, and a failed commit leaves no gap or accounting.
 - The same program runs under ThreadSanitizer, AddressSanitizer and UBSan with a control thread issuing commands while slots are scheduled.
+
+Live results so far (single cell, two UEs, 15 Mbit/s UDP downlink offered to each through the UPF, 20 s windows, counters read from the gNB):
+
+| Policy | Resource-block share UE1 / UE2 | Cell total |
+| --- | --- | --- |
+| `pf` | 49.6 / 50.4 % | 24.1 Mbit/s |
+| `wshare`, equal weights | 50.0 / 50.0 % | 17.5 Mbit/s |
+| `wshare`, 3000 : 1000 | 75.5 / 24.5 % (13.2 / 4.4 Mbit/s) | 17.5 Mbit/s |
+| `wshare`, UE1 cap 30 | 28.7 / 71.3 % (30 of 106 is 28.3 %) | 17.6 Mbit/s |
+
+The shares follow the settings. The cell total, however, is about 27 % lower with
+`wshare` than with `pf`, independent of the weights: the policy is called about a
+quarter less often per second while using the same number of resource blocks per
+call. The likely cause is that serving two UEs in every slot makes each slot more
+expensive for the RF simulator, so it completes fewer slots per second. That is a
+property of this simulated setup, not of a radio, and it is the reason for `wrr`,
+which shares by time slot and keeps one UE per slot. Whether `wrr` recovers the
+total has to be measured (`sched-ctl.py measure` prints the call rate).
 
 Not done yet, and required before relying on it:
 

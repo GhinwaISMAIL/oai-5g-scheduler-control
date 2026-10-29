@@ -7,6 +7,9 @@
  *   pf      stock proportional-fair policy (delegated unchanged)
  *   rr      one backlogged UE after the other, in RNTI order, one policy
  *           invocation each (time-domain round robin)
+ *   wrr     weighted round robin in the time domain: the UE that has received
+ *           the fewest resource blocks relative to its weight takes the slot,
+ *           so shares follow the weights while each slot normally serves one UE
  *   wshare  the free block of every slot is split between all backlogged UEs
  *           in proportion to their weights (frequency-domain weighted share),
  *           bounded by each UE's demand and optional per-UE cap
@@ -149,10 +152,12 @@ static bool is_new_data(const nr_dl_candidate_t *c)
   return !c->skipped && !c->is_retx && !c->scheduled && c->pending_bytes > 0;
 }
 
-/* Time-domain round robin: new-data UEs in RNTI order starting after the UE
- * that was first in line last time; each takes what it needs from the largest
- * free block, so normally one UE per slot. */
-static int ctrl_rr(const nr_dl_sched_params_t *params, nr_dl_candidate_t *candidates, int n_candidates, int n_sched)
+/* Sequential policies: new-data UEs are visited one after the other and each
+ * takes what it needs from the largest free block, so with saturated queues the
+ * first UE takes the whole slot.
+ *   rr  : RNTI order starting after the UE that led last time
+ *   wrr : least granted-resource-blocks-per-weight first (ties: lower RNTI) */
+static int ctrl_sequential(const nr_dl_sched_params_t *params, nr_dl_candidate_t *candidates, int n_candidates, int n_sched, bool by_deficit)
 {
   nr_dl_candidate_t *order[MAX_MOBILES_PER_GNB];
   int n = 0;
@@ -162,22 +167,28 @@ static int ctrl_rr(const nr_dl_sched_params_t *params, nr_dl_candidate_t *candid
   if (n == 0)
     return n_sched;
 
-  /* insertion sort by RNTI */
+  /* insertion sort: by RNTI (rr) or by deficit then RNTI (wrr) */
   for (int i = 1; i < n; i++) {
     nr_dl_candidate_t *k = order[i];
+    double dk = by_deficit ? nr_ctrl_deficit(&g_state, k->rnti) : 0.0;
     int j = i - 1;
-    while (j >= 0 && order[j]->rnti > k->rnti) {
+    while (j >= 0) {
+      double dj = by_deficit ? nr_ctrl_deficit(&g_state, order[j]->rnti) : 0.0;
+      if (dj < dk || (dj == dk && order[j]->rnti <= k->rnti))
+        break;
       order[j + 1] = order[j];
       j--;
     }
     order[j + 1] = k;
   }
-  /* rotate so the first UE with RNTI above the last served one leads */
   int first = 0;
-  while (first < n && order[first]->rnti <= g_state.rr_last_rnti)
-    first++;
-  if (first == n)
-    first = 0;
+  if (!by_deficit) {
+    /* rotate so the first UE with RNTI above the last leader leads */
+    while (first < n && order[first]->rnti <= g_state.rr_last_rnti)
+      first++;
+    if (first == n)
+      first = 0;
+  }
 
   bool led = false;
   for (int k = 0; k < n; k++) {
@@ -313,7 +324,9 @@ int nr_dl_ctrl_policy(const nr_dl_sched_params_t *params, nr_dl_candidate_t *can
   if (n_sched >= params->max_num_ue)
     return n_sched;
   if (g_state.policy == NR_CTRL_POLICY_RR)
-    return ctrl_rr(params, candidates, n_candidates, n_sched);
+    return ctrl_sequential(params, candidates, n_candidates, n_sched, false);
+  if (g_state.policy == NR_CTRL_POLICY_WRR)
+    return ctrl_sequential(params, candidates, n_candidates, n_sched, true);
   return ctrl_wshare(params, candidates, n_candidates, n_sched);
 }
 

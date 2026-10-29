@@ -6,7 +6,7 @@ on the host network, so run this on the cell node).
 
   sched-ctl.py ping
   sched-ctl.py status
-  sched-ctl.py policy pf|rr|wshare
+  sched-ctl.py policy pf|rr|wrr|wshare
   sched-ctl.py weight <rnti|*> <1..1000000>
   sched-ctl.py cap <rnti> <0|5..275>
   sched-ctl.py reset
@@ -117,6 +117,12 @@ def cmd_measure(seconds, **kw):
     for rnti, rbs, retx, byt in rows:
         share = 100.0 * rbs / total if total else 0.0
         print(f"0x{rnti:04x}  {rbs:>12}{share:>9.1f}{retx:>10}{byt:>12}{byt * 8 / seconds / 1e6:>9.2f}")
+    agg = sum(r[3] for r in rows) * 8 / seconds / 1e6
+    calls = int(h1["calls"]) - int(h0["calls"])
+    if calls > 0 and h1["version"] == h0["version"]:
+        print(f"total: {agg:.2f} Mbit/s, {total / seconds:.0f} RBs/s, scheduler calls {calls / seconds:.0f}/s, {total / calls:.1f} RBs per call")
+    else:
+        print(f"total: {agg:.2f} Mbit/s, {total / seconds:.0f} RBs/s")
     return rows
 
 
@@ -152,7 +158,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("ping")
     sub.add_parser("status")
-    p = sub.add_parser("policy"); p.add_argument("name", choices=["pf", "rr", "wshare"])
+    p = sub.add_parser("policy"); p.add_argument("name", choices=["pf", "rr", "wrr", "wshare"])
     p = sub.add_parser("weight"); p.add_argument("rnti"); p.add_argument("value", type=int)
     p = sub.add_parser("cap"); p.add_argument("rnti"); p.add_argument("rbs", type=int)
     sub.add_parser("reset")

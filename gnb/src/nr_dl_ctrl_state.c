@@ -28,6 +28,8 @@ const char *nr_ctrl_policy_name(int policy)
       return "rr";
     case NR_CTRL_POLICY_WSHARE:
       return "wshare";
+    case NR_CTRL_POLICY_WRR:
+      return "wrr";
     default:
       return "unknown";
   }
@@ -218,6 +220,8 @@ int nr_ctrl_handle(nr_ctrl_state_t *st, const char *cmd, const nr_ctrl_ue_view_t
       pol = NR_CTRL_POLICY_RR;
     else if (!strcmp(tok[1], "wshare"))
       pol = NR_CTRL_POLICY_WSHARE;
+    else if (!strcmp(tok[1], "wrr"))
+      pol = NR_CTRL_POLICY_WRR;
     if (pol < 0)
       return reply_err(reply, reply_size, "unknown_policy");
     st->policy = pol;

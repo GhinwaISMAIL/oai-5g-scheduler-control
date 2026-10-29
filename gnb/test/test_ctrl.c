@@ -140,6 +140,7 @@ static void test_protocol(void)
 {
   nr_ctrl_state_t st;
   char r[4096];
+  uint32_t v0;
   memset(&st, 0, sizeof(st));
   nr_ctrl_init(&st);
 
@@ -151,11 +152,16 @@ static void test_protocol(void)
   run(&st, "policy WSHARE", r);
   CHECK(!strncmp(r, "OK version=1 policy=wshare", 26));
   CHECK(st.policy == NR_CTRL_POLICY_WSHARE);
+  run(&st, "POLICY wrr", r);
+  CHECK(!strncmp(r, "OK version=2 policy=wrr", 23) && st.policy == NR_CTRL_POLICY_WRR);
+  run(&st, "policy WSHARE", r);
+  CHECK(st.policy == NR_CTRL_POLICY_WSHARE);
+  v0 = st.version;
   run(&st, "POLICY bogus", r);
-  CHECK(!strncmp(r, "ERR unknown_policy", 18) && st.version == 1);
+  CHECK(!strncmp(r, "ERR unknown_policy", 18) && st.version == v0);
 
   run(&st, "WEIGHT 1001 3000", r);
-  CHECK(!strncmp(r, "OK version=2", 12));
+  CHECK(!strncmp(r, "OK version=4", 12));
   CHECK(nr_ctrl_weight_of(&st, 0x1001) == 3000 && nr_ctrl_weight_of(&st, 0x1002) == NR_CTRL_DEFAULT_WEIGHT);
   run(&st, "WEIGHT 0x1002 500", r);
   CHECK(nr_ctrl_weight_of(&st, 0x1002) == 500);
@@ -399,6 +405,35 @@ static void test_policy(void)
   sim_slot(2, 4);
   stub_commit_fail_rnti = 0;
   CHECK(!cands[0].scheduled && cands[1].scheduled);
+
+  /* weighted round robin: one UE per slot, resource blocks follow the weights */
+  ctl("RESET", r, sizeof(r));
+  ctl("POLICY wrr", r, sizeof(r));
+  CHECK(!strncmp(r, "OK", 2));
+  ctl("WEIGHT 1001 3000", r, sizeof(r));
+  ctl("WEIGHT 1002 1000", r, sizeof(r));
+  {
+    uint32_t w1 = ues[0].mac_stats.dl.total_rbs, w2 = ues[1].mac_stats.dl.total_rbs;
+    int one_per_slot = 1, n1 = 0;
+    for (int s = 0; s < 2000; s++) {
+      sim_slot_prepare(2, 1000000);
+      int n = sim_slot(2, 4);
+      if (n != 1)
+        one_per_slot = 0;
+      n1 += cands[0].scheduled;
+    }
+    double r1 = ues[0].mac_stats.dl.total_rbs - w1, r2 = ues[1].mac_stats.dl.total_rbs - w2;
+    CHECK(one_per_slot);
+    CHECK(fabs(r1 / r2 - 3.0) < 0.05);
+    CHECK(r1 + r2 == 2000.0 * NSLOT_RB);
+    CHECK(n1 == 1500);
+  }
+  /* wrr with a cap on the leading UE: the next UE uses the rest of the slot */
+  ctl("CAP 1001 30", r, sizeof(r));
+  sim_slot_prepare(2, 1000000);
+  CHECK(sim_slot(2, 4) == 2);
+  CHECK(cands[0].sched_pdsch.rbSize == 30 && cands[1].sched_pdsch.rbSize == NSLOT_RB - 30);
+  ctl("CAP 1001 0", r, sizeof(r));
 
   /* round robin: one UE per slot, strictly alternating */
   ctl("RESET", r, sizeof(r));

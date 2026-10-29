@@ -7,7 +7,7 @@
  * Commands (one per datagram, case-insensitive keywords, RNTI in hex):
  *   PING
  *   GET
- *   POLICY pf|rr|wshare
+ *   POLICY pf|rr|wrr|wshare
  *   WEIGHT <rnti|*> <1..1000000>      relative downlink share (wshare)
  *   CAP <rnti> <0|5..275>             most resource blocks per slot, 0 = none
  *   RESET                             stock proportional-fair, state cleared
@@ -26,7 +26,7 @@
 #define NR_CTRL_MAX_WEIGHT 1000000
 #define NR_CTRL_DEFAULT_WEIGHT 1000
 
-enum { NR_CTRL_POLICY_PF = 0, NR_CTRL_POLICY_RR = 1, NR_CTRL_POLICY_WSHARE = 2 };
+enum { NR_CTRL_POLICY_PF = 0, NR_CTRL_POLICY_RR = 1, NR_CTRL_POLICY_WSHARE = 2, NR_CTRL_POLICY_WRR = 3 };
 
 typedef struct {
   uint16_t rnti;
