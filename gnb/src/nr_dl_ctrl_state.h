@@ -25,6 +25,7 @@
 #define NR_CTRL_MIN_WEIGHT 1
 #define NR_CTRL_MAX_WEIGHT 1000000
 #define NR_CTRL_DEFAULT_WEIGHT 1000
+#define NR_CTRL_SLOTS 40 /* slot indices tracked (80 slots per frame at most 40 are kept) */
 
 enum { NR_CTRL_POLICY_PF = 0, NR_CTRL_POLICY_RR = 1, NR_CTRL_POLICY_WSHARE = 2, NR_CTRL_POLICY_WRR = 3 };
 
@@ -45,6 +46,10 @@ typedef struct {
   uint16_t rr_last_rnti;
   /* diagnostics (non-pf policies) */
   uint64_t commit_fail;    /* grants refused at commit, all UEs */
+  uint64_t fail_cce;       /* ... of which no free PDCCH candidate (CCE) */
+  uint64_t fail_pucch;     /* ... of which no ACK/NACK occasion (PUCCH) */
+  uint32_t slot_calls[NR_CTRL_SLOTS]; /* invocations by slot index in the frame */
+  uint32_t slot_fail[NR_CTRL_SLOTS];  /* refused grants by slot index */
   uint64_t multi_ue_slots; /* invocations that scheduled two or more new-data UEs */
   uint64_t ws_groups;      /* wshare: groups planned */
   uint64_t ws_free_rb;     /* wshare: free block size summed over groups */
@@ -70,7 +75,7 @@ int nr_ctrl_cap_of(const nr_ctrl_state_t *st, uint16_t rnti);
 /* granted_rbs / weight, the quantity the policy equalises */
 double nr_ctrl_deficit(const nr_ctrl_state_t *st, uint16_t rnti);
 void nr_ctrl_account(nr_ctrl_state_t *st, uint16_t rnti, int rbs);
-void nr_ctrl_note_commit_fail(nr_ctrl_state_t *st, uint16_t rnti);
+void nr_ctrl_note_commit_fail(nr_ctrl_state_t *st, uint16_t rnti, int slot, int cce);
 /* Drop entries of UEs that are no longer connected. */
 void nr_ctrl_prune(nr_ctrl_state_t *st, const nr_ctrl_ue_view_t *ues, int n_ues);
 /* Executes one command and writes the reply; returns the reply length. */

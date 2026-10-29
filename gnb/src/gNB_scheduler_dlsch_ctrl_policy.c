@@ -78,8 +78,10 @@ static bool ctrl_commit(const nr_dl_sched_params_t *params, nr_dl_candidate_t *c
   cand->sched_pdsch.rbStart = rb_start;
   cand->sched_pdsch.rbSize = rb_size;
   cand->sched_pdsch.mcs = mcs;
+  __typeof__(cand->UE->UE_sched_ctrl.dl_cce_fail) cce_before = cand->UE->UE_sched_ctrl.dl_cce_fail;
   if (!commit_alloc(params, cand)) {
-    nr_ctrl_note_commit_fail(&g_state, cand->rnti);
+    /* validation counts a missing PDCCH candidate itself; anything else is the ACK/NACK (PUCCH) side */
+    nr_ctrl_note_commit_fail(&g_state, cand->rnti, params->slot, cand->UE->UE_sched_ctrl.dl_cce_fail != cce_before);
     return false;
   }
   cand->scheduled = true;
@@ -225,7 +227,11 @@ static bool same_group(const nr_dl_candidate_t *a, const nr_dl_candidate_t *b)
 }
 
 /* Frequency-domain weighted share of the largest free block for one group of
- * UEs that compete for the same resource blocks. */
+ * UEs that compete for the same resource blocks.  UEs are granted one after the
+ * other; each share is the weighted max-min share of what is still free among the
+ * UEs not yet handled.  A grant the MAC refuses (no PDCCH candidate, no ACK/NACK
+ * occasion) therefore leaves its share to the following UEs, and a refusal of a
+ * later UE leaves a free tail that is given to the last granted UE up to its demand. */
 static int ctrl_wshare_group(const nr_dl_sched_params_t *params, nr_dl_candidate_t **grp, int ng, int n_sched)
 {
   uint16_t *vrb_map = params->vrb_map[grp[0]->alloc_beam_idx];
@@ -256,7 +262,6 @@ static int ctrl_wshare_group(const nr_dl_sched_params_t *params, nr_dl_candidate
 
   uint32_t weight[MAX_MOBILES_PER_GNB];
   int demand[MAX_MOBILES_PER_GNB];
-  int out[MAX_MOBILES_PER_GNB] = {0};
   for (int i = 0; i < n; i++) {
     weight[i] = nr_ctrl_weight_of(&g_state, grp[i]->rnti);
     int d = ctrl_demand_rbs(params, grp[i], free_rb);
@@ -265,26 +270,45 @@ static int ctrl_wshare_group(const nr_dl_sched_params_t *params, nr_dl_candidate
       d = cap;
     demand[i] = d;
   }
-  nr_ctrl_split(n, weight, demand, NR_CTRL_MIN_RB, free_rb, out);
   g_state.ws_groups++;
   g_state.ws_free_rb += (uint64_t)free_rb;
-  for (int i = 0; i < n; i++) {
+  for (int i = 0; i < n; i++)
     g_state.ws_demand_rb += (uint64_t)demand[i];
-    g_state.ws_planned_rb += (uint64_t)out[i];
-  }
 
   int cursor = start;
+  int remaining = free_rb;
+  int last = -1;
+  int last_size = 0;
   for (int i = 0; i < n; i++) {
-    if (out[i] <= 0)
+    int out[MAX_MOBILES_PER_GNB] = {0};
+    nr_ctrl_split(n - i, weight + i, demand + i, NR_CTRL_MIN_RB, remaining, out);
+    int share = out[0];
+    if (share <= 0)
+      break; /* nothing left for this and the following UEs */
+    g_state.ws_planned_rb += (uint64_t)share;
+    if (!ctrl_commit(params, grp[i], cursor, share, grp[i]->sched_pdsch.mcs))
       continue;
-    if (ctrl_commit(params, grp[i], cursor, out[i], grp[i]->sched_pdsch.mcs)) {
-      nr_ctrl_account(&g_state, grp[i]->rnti, out[i]);
-      g_state.ws_committed_rb += (uint64_t)out[i];
-      cursor += out[i];
-      n_sched++;
-      if (n_sched >= params->max_num_ue)
-        return n_sched;
-    }
+    nr_ctrl_account(&g_state, grp[i]->rnti, share);
+    g_state.ws_committed_rb += (uint64_t)share;
+    cursor += share;
+    remaining -= share;
+    last = i;
+    last_size = share;
+    n_sched++;
+    if (n_sched >= params->max_num_ue)
+      break;
+  }
+
+  /* free tail left by refused grants: extend the last granted UE up to its demand.
+   * The dispatch step trims the final size to what the UE has to send. */
+  if (last >= 0 && remaining > 0 && demand[last] > last_size) {
+    int extra = remaining < demand[last] - last_size ? remaining : demand[last] - last_size;
+    nr_dl_candidate_t *c = grp[last];
+    for (int rb = 0; rb < extra; rb++)
+      vrb_map[c->sched_pdsch.rbStart + last_size + rb + c->bwp_start] |= c->alloc_slbitmap;
+    c->sched_pdsch.rbSize = (uint16_t)(last_size + extra);
+    nr_ctrl_account(&g_state, c->rnti, extra);
+    g_state.ws_committed_rb += (uint64_t)extra;
   }
   return n_sched;
 }
@@ -320,6 +344,8 @@ int nr_dl_ctrl_policy(const nr_dl_sched_params_t *params, nr_dl_candidate_t *can
 {
   /* called with the scheduler lock held */
   g_state.calls++;
+  if (params->slot >= 0 && params->slot < NR_CTRL_SLOTS)
+    g_state.slot_calls[params->slot]++;
   if (g_state.calls % CTRL_PRUNE_PERIOD == 0) {
     nr_ctrl_ue_view_t view[MAX_MOBILES_PER_GNB];
     int nv = build_view(g_mac, view, MAX_MOBILES_PER_GNB);

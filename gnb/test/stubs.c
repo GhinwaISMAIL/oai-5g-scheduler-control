@@ -11,6 +11,7 @@
 
 int stub_pf_calls;
 uint16_t stub_commit_fail_rnti;
+int stub_fail_is_cce;
 int stub_bytes_per_rb = 100;
 
 int find_largest_free_block(const uint16_t *vrb_map, uint16_t slbitmap, int bwp_start, int bwp_size, int *out_start)
@@ -74,8 +75,11 @@ bool get_rb_alloc(int rbSize_min,
  * counts them in the UE's MAC statistics. */
 bool commit_alloc(const nr_dl_sched_params_t *params, nr_dl_candidate_t *cand)
 {
-  if (stub_commit_fail_rnti && cand->rnti == stub_commit_fail_rnti)
+  if (stub_commit_fail_rnti && cand->rnti == stub_commit_fail_rnti) {
+    if (stub_fail_is_cce)
+      cand->UE->UE_sched_ctrl.dl_cce_fail++;
     return false;
+  }
   uint16_t *vrb = params->vrb_map[cand->alloc_beam_idx];
   int s = cand->bwp_start + cand->sched_pdsch.rbStart;
   int e = s + cand->sched_pdsch.rbSize;

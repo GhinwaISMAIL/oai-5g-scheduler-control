@@ -85,9 +85,15 @@ void nr_ctrl_account(nr_ctrl_state_t *st, uint16_t rnti, int rbs)
   u->granted_slots++;
 }
 
-void nr_ctrl_note_commit_fail(nr_ctrl_state_t *st, uint16_t rnti)
+void nr_ctrl_note_commit_fail(nr_ctrl_state_t *st, uint16_t rnti, int slot, int cce)
 {
   st->commit_fail++;
+  if (cce)
+    st->fail_cce++;
+  else
+    st->fail_pucch++;
+  if (slot >= 0 && slot < NR_CTRL_SLOTS)
+    st->slot_fail[slot]++;
   nr_ctrl_ue_t *u = get_or_add(st, rnti);
   if (u)
     u->commit_fail++;
@@ -156,7 +162,7 @@ static int reply_status(const nr_ctrl_state_t *st, const nr_ctrl_ue_view_t *ues,
 {
   int len = snprintf(reply,
                      size,
-                     "OK version=%u policy=%s default_weight=%u min_rb=%d calls=%llu commit_fail=%llu multi_ue_slots=%llu "
+                     "OK version=%u policy=%s default_weight=%u min_rb=%d calls=%llu commit_fail=%llu fail_cce=%llu fail_pucch=%llu multi_ue_slots=%llu "
                      "ws_groups=%llu ws_free_rb=%llu ws_demand_rb=%llu ws_planned_rb=%llu ws_committed_rb=%llu\n",
                      (unsigned)st->version,
                      nr_ctrl_policy_name(st->policy),
@@ -164,6 +170,8 @@ static int reply_status(const nr_ctrl_state_t *st, const nr_ctrl_ue_view_t *ues,
                      NR_CTRL_MIN_RB,
                      (unsigned long long)st->calls,
                      (unsigned long long)st->commit_fail,
+                     (unsigned long long)st->fail_cce,
+                     (unsigned long long)st->fail_pucch,
                      (unsigned long long)st->multi_ue_slots,
                      (unsigned long long)st->ws_groups,
                      (unsigned long long)st->ws_free_rb,
@@ -186,6 +194,10 @@ static int reply_status(const nr_ctrl_state_t *st, const nr_ctrl_ue_view_t *ues,
                     (unsigned long long)ues[k].mac_dl_rbs,
                     (unsigned long long)ues[k].mac_dl_rbs_retx,
                     (unsigned long long)ues[k].mac_dl_sdu_bytes);
+  }
+  for (int k = 0; k < NR_CTRL_SLOTS && len > 0 && (size_t)len < size; k++) {
+    if (st->slot_calls[k] || st->slot_fail[k])
+      len += snprintf(reply + len, size - (size_t)len, "SLOT %d calls=%u fail=%u\n", k, (unsigned)st->slot_calls[k], (unsigned)st->slot_fail[k]);
   }
   if (len < 0)
     return 0;

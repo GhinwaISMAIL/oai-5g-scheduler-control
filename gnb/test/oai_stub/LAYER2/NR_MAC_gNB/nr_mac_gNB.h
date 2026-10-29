@@ -70,6 +70,7 @@ typedef struct {
 } NR_sched_pdsch_t;
 typedef struct {
   bool ta_apply;
+  int dl_cce_fail;
 } NR_UE_sched_ctrl_t;
 typedef struct {
   int BWPSize;

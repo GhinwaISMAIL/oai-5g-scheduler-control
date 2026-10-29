@@ -87,13 +87,24 @@ Live results so far (single cell, two UEs, 15 Mbit/s UDP downlink offered to eac
 A cap of 30 on one UE gave it 28.7 % of the resource blocks (30 of 106 is 28.3 %).
 The receivers inside the UEs agree with the gNB counters on who got the larger share.
 
-Known defect: `wshare` uses only about 74 % of the resource blocks of each slot
-(78 of 106), so the cell total falls by the same fraction regardless of the
-weights; the scheduler is called equally often in every policy, so this is not a
-slower simulator. The cause is not established. The controller counts refused
-grants (`commit_fail`), the demand it sees and what it plans and commits per call
-(`sched-ctl.py status` and `measure`), to tell a refused second grant in the same
-slot from a demand shortfall. Until that is resolved use `wrr` to enforce shares
+Open issue: in the first live runs `wshare` used only about 74 % of the resource
+blocks of each slot (78 of 106), so the cell total fell by the same fraction
+regardless of the weights. The scheduler is called equally often in every policy,
+so this is not a slower simulator. The counters showed demand above the free block
+and a plan equal to it, but only about 75 % of the planned blocks committed: the
+grants were refused by the gNB's own validation (PDCCH candidate or ACK/NACK
+occasion), in pairs, when both UEs were granted in the same slot.
+
+`wshare` now grants the UEs one after the other. Each share is the weighted
+max-min share of what is still free among the UEs not yet handled, so a refused
+grant leaves its share to the following UEs, and when the last UE is refused the
+freed tail is added to the UE granted before it, up to that UE's demand. Refusals
+are counted by cause (`fail_cce`, `fail_pucch`) and by slot index in the frame
+(`sched-ctl.py status` and `measure`). This change is verified only against the
+host-side model, which can refuse a grant on request; it must be measured on the
+live gNB (cell total close to `pf`, shares following the weights) before it is
+considered fixed. If the cell total is still low, the per-slot refusal table shows
+in which slots the grants are refused. Until then use `wrr` to enforce shares
 without losing capacity.
 
 Not done yet, and required before relying on it:

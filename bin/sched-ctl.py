@@ -58,7 +58,12 @@ def parse_status(text):
     lines = text.strip().splitlines()
     header = _kv(lines[0].split())
     ues = []
+    header["slots"] = []
     for line in lines[1:]:
+        if line.startswith("SLOT "):
+            parts = line.split()
+            kv = _kv(parts)
+            header["slots"].append((int(parts[1]), int(kv["calls"]), int(kv["fail"])))
         if line.startswith("UE "):
             ue = _kv(line.split())
             ue["rnti"] = int(ue["rnti"], 16)
@@ -76,9 +81,13 @@ def print_status(header, ues, out=sys.stdout):
     print(f"version={header['version']} policy={header['policy']} default_weight={header['default_weight']} "
           f"min_rb={header['min_rb']} scheduler_calls={header['calls']}", file=out)
     if int(header.get("ws_groups", 0)) or int(header.get("commit_fail", 0)):
-        print(f"diagnostics: commit_fail={header['commit_fail']} multi_ue_slots={header['multi_ue_slots']} "
+        print(f"diagnostics: commit_fail={header['commit_fail']} (cce {header['fail_cce']}, pucch {header['fail_pucch']}) "
+              f"multi_ue_slots={header['multi_ue_slots']} "
               f"wshare groups={header['ws_groups']} free_rb={header['ws_free_rb']} demand_rb={header['ws_demand_rb']} "
               f"planned_rb={header['ws_planned_rb']} committed_rb={header['ws_committed_rb']}", file=out)
+    if header["slots"]:
+        print("refused grants by slot index in the frame (calls / refused): "
+              + "  ".join(f"{i}:{c}/{f}" for i, c, f in header["slots"] if f))
     print(f"{'rnti':<8}{'weight':>8}{'set':>5}{'cap':>6}{'granted_rbs':>14}{'mac_dl_rbs':>12}{'retx_rbs':>10}{'dl_sdu_bytes':>14}", file=out)
     for u in ues:
         print(f"0x{u['rnti']:04x}  {u['weight']:>8}{u['explicit']:>5}{u['cap']:>6}{u['granted_rbs']:>14}"

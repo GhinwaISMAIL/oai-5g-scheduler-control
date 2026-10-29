@@ -397,7 +397,7 @@ static void test_policy(void)
   CHECK(sim_slot(2, 4) == 2);
   CHECK(cands[0].sched_pdsch.rbSize == NR_CTRL_MIN_RB && cands[1].sched_pdsch.rbSize == NR_CTRL_MIN_RB);
 
-  /* a failed commit does not leave a hole or get accounted, and is counted */
+  /* a refused grant is counted and its share goes to the other UE */
   ctl("RESET", r, sizeof(r));
   ctl("POLICY wshare", r, sizeof(r));
   stub_commit_fail_rnti = 0x1001;
@@ -405,9 +405,41 @@ static void test_policy(void)
   sim_slot(2, 4);
   stub_commit_fail_rnti = 0;
   CHECK(!cands[0].scheduled && cands[1].scheduled);
+  CHECK(cands[1].sched_pdsch.rbSize == NSLOT_RB && cands[1].sched_pdsch.rbStart == 0);
   ctl("GET", r, sizeof(r));
-  CHECK(strstr(r, "commit_fail=1 multi_ue_slots=0"));
+  CHECK(strstr(r, "commit_fail=1 fail_cce=0 fail_pucch=1 multi_ue_slots=0"));
   CHECK(strstr(r, "ws_groups=1 ws_free_rb=106"));
+  CHECK(strstr(r, "granted_rbs=0 granted_slots=0 commit_fail=1")); /* UE 0x1001 */
+
+  /* a refusal of the later UE: the first one is extended to use the freed share */
+  ctl("RESET", r, sizeof(r));
+  ctl("POLICY wshare", r, sizeof(r));
+  stub_commit_fail_rnti = 0x1002;
+  stub_fail_is_cce = 1;
+  sim_slot_prepare(2, 1000000);
+  sim_slot(2, 4);
+  stub_commit_fail_rnti = 0;
+  stub_fail_is_cce = 0;
+  CHECK(cands[0].scheduled && !cands[1].scheduled);
+  CHECK(cands[0].sched_pdsch.rbSize == NSLOT_RB && cands[0].sched_pdsch.rbStart == 0);
+  {
+    int used = 0;
+    for (int rb = 0; rb < NSLOT_RB; rb++)
+      used += (vrb[0][rb] & 0x3fff) != 0;
+    CHECK(used == NSLOT_RB); /* the extension is marked in the resource map */
+  }
+  ctl("GET", r, sizeof(r));
+  CHECK(strstr(r, "fail_cce=1 fail_pucch=0"));
+
+  /* extension never exceeds the UE's demand */
+  ctl("RESET", r, sizeof(r));
+  ctl("POLICY wshare", r, sizeof(r));
+  stub_commit_fail_rnti = 0x1002;
+  sim_slot_prepare(2, 1000000);
+  cands[0].pending_bytes = 2988; /* 30 RBs with the 12 byte MAC overhead */
+  sim_slot(2, 4);
+  stub_commit_fail_rnti = 0;
+  CHECK(cands[0].sched_pdsch.rbSize == 30);
 
   /* weighted round robin: one UE per slot, resource blocks follow the weights */
   ctl("RESET", r, sizeof(r));
