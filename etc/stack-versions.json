@@ -16,7 +16,9 @@
   "capabilities": {
     "monitoring_xapps_included": true,
     "e2_to_prb_actuator_implemented": false,
-    "new_repository_deployment_validated": false
+    "new_repository_deployment_validated": false,
+    "local_dl_prb_policy_control_implemented": true,
+    "local_dl_prb_policy_control_validated_on_live_gnb": false
   },
   "control_source_blobs": {
     "ran_func_mac.c": "4a37130533601f5bb04939fa4be9e25b566a406f",

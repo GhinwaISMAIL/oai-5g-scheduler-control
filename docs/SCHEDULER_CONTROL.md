@@ -1,7 +1,88 @@
-# Scheduler control: verified baseline and implementation boundary
+# Scheduler control: PRB allocation and scheduling policy
 
-The initial target is one cell with two competing UEs. The network and monitoring
-xApps are included; an effective per-UE PRB actuator is not yet implemented.
+The profile deploys one cell with two competing UEs. The gNB can run a
+controllable downlink scheduler (`GNB_CTRL=1`, see `DEPLOYMENT.md`) whose policy,
+per-UE weights and per-UE resource-block caps are changed at run time and read
+back from the gNB. The control path is local to the cell node; there is no E2
+control path yet (see the findings below for why the stock E2 MAC control cannot
+be used).
+
+## What is controlled
+
+The policy replaces the downlink `dl_rb_alloc` function of the OAI MAC scheduler
+(a pluggable hook at the pinned revision). HARQ retransmissions and UEs that only
+need a MAC control element are served first in every mode, as in the stock policy.
+
+| Policy | Behaviour |
+| --- | --- |
+| `pf` | The stock proportional-fair policy, unchanged. This is the default after start and after `reset`. |
+| `rr` | Time-domain round robin: backlogged UEs in RNTI order, each takes what it needs from the largest free block, so normally one UE per slot. |
+| `wshare` | Frequency-domain weighted share: the largest free block of every slot is divided between all UEs with downlink data in proportion to their weights, never giving a UE more than it can use, never less than 5 resource blocks, and handing unused share to the others. |
+
+Per-UE settings (not used by `pf`):
+
+- `weight` (1 to 1000000, default 1000): relative share in `wshare`.
+- `cap` (0 or 5 to 275): most resource blocks the UE gets in one slot, `0` = no cap. Applies to `wshare` and `rr`. A cap leaves resource blocks unused when the other UEs cannot take them.
+
+Meaning of the numbers: a weight is a share of the resource blocks scheduled
+*among UEs that are backlogged in the same slot*. It is not a guaranteed
+throughput: UEs at different MCS turn the same resource blocks into different bit
+rates, retransmissions and control signaling take resource blocks first, and a UE
+with little traffic uses less than its share. Use `measure` for the allocation
+that actually happened.
+
+## Using it (on the cell node)
+
+```bash
+cd /local/repository
+python3 bin/sched-ctl.py status                       # policy, weights, caps, counters per UE (RNTI)
+python3 bin/sched-ctl.py map --containers ric5g-ue-cell1-1,ric5g-ue-cell1-2   # which RNTI is which UE
+python3 bin/sched-ctl.py policy wshare
+python3 bin/sched-ctl.py weight 1001 3000             # RNTI in hex, as printed by status
+python3 bin/sched-ctl.py weight 1002 1000
+python3 bin/sched-ctl.py measure --seconds 20         # resource blocks actually scheduled per UE
+python3 bin/sched-ctl.py cap 1001 30
+python3 bin/sched-ctl.py reset                        # back to the stock policy and defaults
+```
+
+Every changing command is acknowledged by the gNB and then read back with a second
+request; the command fails unless the read-back shows the requested value. The
+version number in `status` increases with every accepted change. RNTIs belong to
+one attachment: when a UE disconnects its settings are dropped, so apply weights
+again after UEs re-register.
+
+## Implementation
+
+| File | Role |
+| --- | --- |
+| `gnb/src/nr_dl_ctrl_alloc.c` | weighted max-min split of the free block (largest-remainder rounding, minimum grant, work conserving) |
+| `gnb/src/nr_dl_ctrl_state.c` | per-UE state and the text command protocol, with validation |
+| `gnb/src/gNB_scheduler_dlsch_ctrl_policy.c` | the policy, the lock handling and the UDP endpoint on `127.0.0.1:9099` (`SCHED_CTRL_ADDR`, `SCHED_CTRL_PORT`) |
+| `gnb/patches/0001-controllable-dl-rb-policy.patch` | registers the sources in the OAI build and installs the policy at MAC start |
+| `gnb/build-gnb-image.sh` | builds the gNB image from the stock OAI Dockerfiles at the pinned commit with the above applied |
+| `bin/sched-ctl.py` | client with read-back, `measure` and UE-to-RNTI `map` |
+
+State is read and written only with the MAC scheduler lock held, so a control
+command is applied between two scheduling slots.
+
+## Verification status
+
+Done (`gnb/test`, `tests/test_scheduler_control.py`):
+
+- The split is checked on 200,000 random cases for range, minimum grant, sum, work conservation and weighted fairness, plus fixed examples.
+- The command parser is checked with valid and malformed input, version handling, reset and table limits.
+- The policy runs for thousands of slots against copies of the gNB scheduler helpers (`find_largest_free_block` and `get_rb_alloc` are the pinned code): 3:1 weights give 3:1 resource blocks with every block used, equal weights give 1:1, a cap is honoured, a small backlog frees capacity for the other UE, retransmissions are served first with their exact size, round robin alternates strictly, and a failed commit leaves no gap or accounting.
+- The same program runs under ThreadSanitizer, AddressSanitizer and UBSan with a control thread issuing commands while slots are scheduled.
+
+Not done yet, and required before relying on it:
+
+- Building the gNB image (the stand-in headers in `gnb/test/oai_stub` are transcribed from the pinned source; the real compile happens in the image build).
+- Running it on a live gNB: the resource-block shares above are properties of the policy given the gNB's candidate list; with real traffic they must be measured with `measure` alongside the delivered traffic.
+- The E2 path: an E2 service-model control message and a matching xApp. The stock E2 MAC control is a stub in the gNB; implementing the message on both ends needs changes in the FlexRIC service model and the xApp.
+- Uplink scheduling is not controlled. Handovers and multi-cell coordination are outside scope.
+
+The sources are compiled into the OAI gNB and keep the gNB's licensing in mind
+when distributing the resulting image.
 
 ## Exact pinned-source findings
 
@@ -25,29 +106,8 @@ patches remain possible. Inspect the running artifacts before making a runtime
 capability claim. Unsupported RC actions may hit assertions; do not probe them
 by sending arbitrary control requests to a live gNB.
 
-## First actuator design
+## Remaining boundary
 
-Keep slot-level decisions inside the gNB; let an xApp update policy parameters at
-a slower, explicitly measured cadence. Implement and test these pieces together:
-
-1. A bounded per-UE downlink weight or resource-budget state, keyed by the actual
-   attached UE identity, with update synchronization against the MAC scheduler.
-2. A defined E2 control schema and matching xApp encoder. Validate identifiers,
-   ranges and stale UE contexts; reject unsupported operations without assertions.
-3. A scheduler hook that consumes the state while preserving mandatory control
-   signaling and retransmissions. A weighted priority is not a guaranteed PRB
-   percentage; name the policy according to what it actually enforces.
-4. Read-back of the applied version/parameters and actual MAC allocation counters.
-   A command receipt, E2 ACK or desired-policy file is not sufficient evidence.
-5. Deterministic baseline/rollback behavior and a reproducible gNB image build
-   pinned to source, patches, build flags and resulting digest.
-
-Two equally backlogged UEs are the first comparison. Equal and unequal shares
-must be evaluated over a declared observation window, separately from offered
-traffic and delivered bytes. HARQ, channel quality, inactive queues, TDD direction
-and control overhead affect the result. Do not interpret traffic shaping as radio
-PRB enforcement or expect a scheduling change to fix RFsim CPU slowdown.
-
-The next implementation milestone is the real E2-to-MAC actuator and its xApp.
-This repository currently supplies the complete single-cell stack and telemetry
-baseline for that work. Handovers and multi-cell coordination are outside scope.
+The monitoring xApps remain read-only. Control currently goes through the local
+endpoint above; an xApp-driven path needs the E2 extension described in the
+findings and is not implemented here.

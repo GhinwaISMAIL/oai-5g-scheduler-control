@@ -126,5 +126,39 @@ over a declared common interval, not counters from unrelated runs or the exporte
 MAC slot field. Keep enough load to make both UE queues active for a fairness test.
 
 Do not run a placeholder slice-control example or unsupported RC action as a
-PRB experiment. The real actuator and its matching control xApp need the extension
-specified in `SCHEDULER_CONTROL.md`, followed by source/build and live validation.
+PRB experiment. Scheduler control goes through the controllable gNB below.
+
+## Controllable scheduler
+
+Build and start the gNB with the controllable downlink scheduler (details and
+verification status in `SCHEDULER_CONTROL.md`).
+
+On cell1, build the image once (tens of minutes; the log is
+`/local/logs/gnb-build.log`; the last line printed is the image tag). Use `nohup`
+so the build survives a closed terminal:
+
+```bash
+cd /local/repository && sudo git pull --ff-only
+sudo nohup bash gnb/build-gnb-image.sh > /local/logs/gnb-build.out 2>&1 &
+tail -n 3 /local/logs/gnb-build.out        # ends with the image tag when done
+docker image ls ric5g/oai-gnb-ctrl
+```
+
+To reuse the image on later reservations, push it once with
+`sudo PUSH_TO=<your-registry>/<name>:<tag> bash gnb/build-gnb-image.sh` after
+`docker login`, and start cells with `GNB_CTRL_IMAGE=<that name:tag>`.
+
+Then restart the cell with the controllable gNB. The core and RIC stay up:
+
+```bash
+cd /local/repository
+sudo GNB_CTRL=1 bash bin/node-setup.sh cell 1 1 2 uniform AWGN >> /local/logs/setup.log 2>&1
+cat /local/logs/GNB_IMAGE /local/logs/CELL_READY
+python3 bin/sched-ctl.py status        # lists both UEs with RNTIs, policy=pf
+```
+
+Before changing any policy repeat the traffic test with the new image and policy
+`pf`: it has to give the same result as the stock image. Then use
+`bin/sched-ctl.py` as described in `SCHEDULER_CONTROL.md` and compare the shares
+reported by `measure` with the traffic counters at the receivers over the same
+interval.

@@ -1,0 +1,34 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index e69a6a9..40de38d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1204,6 +1204,9 @@ set (MAC_NR_SRC
+   ${NR_GNB_MAC_DIR}/gNB_scheduler_bch.c
+   ${NR_GNB_MAC_DIR}/gNB_scheduler_dlsch.c
+   ${NR_GNB_MAC_DIR}/gNB_scheduler_dlsch_default_policies.c
++  ${NR_GNB_MAC_DIR}/gNB_scheduler_dlsch_ctrl_policy.c
++  ${NR_GNB_MAC_DIR}/nr_dl_ctrl_alloc.c
++  ${NR_GNB_MAC_DIR}/nr_dl_ctrl_state.c
+   ${NR_GNB_MAC_DIR}/gNB_scheduler_ulsch.c
+   ${NR_GNB_MAC_DIR}/gNB_scheduler_ulsch_default_policies.c
+   ${NR_GNB_MAC_DIR}/gNB_scheduler_primitives.c
+diff --git a/openair2/LAYER2/NR_MAC_gNB/main.c b/openair2/LAYER2/NR_MAC_gNB/main.c
+index c4aa33e..aaacd43 100644
+--- a/openair2/LAYER2/NR_MAC_gNB/main.c
++++ b/openair2/LAYER2/NR_MAC_gNB/main.c
+@@ -18,6 +18,7 @@
+ #include "NR_MAC_COMMON/nr_mac_common.h"
+ #include "NR_MAC_gNB/mac_proto.h"
+ #include "NR_MAC_gNB/mac_rrc_ul.h"
++#include "NR_MAC_gNB/gNB_scheduler_dlsch_ctrl_policy.h"
+ #include "NR_MAC_gNB/nr_mac_gNB.h"
+ #include "NR_PHY_INTERFACE/NR_IF_Module.h"
+ #include "NR_RLC-BearerConfig.h"
+@@ -320,6 +321,7 @@ void mac_top_init_gNB(ngran_node_t node_type,
+         RC.nrmac[i]->dl_beam_select = nr_dl_beam_select_default;
+         RC.nrmac[i]->dl_tda_select = nr_dl_tda_select_default;
+         RC.nrmac[i]->dl_rb_alloc = nr_dl_proportional_fair;
++        nr_dl_ctrl_policy_init(RC.nrmac[i]);
+       }
+       if (!IS_SOFTMODEM_NOSTATS)
+         threadCreate(&RC.nrmac[i]->stats_thread,

@@ -151,8 +151,29 @@ ping -c1 -W2 "${AMF_IP}" > /dev/null 2>&1 \
 # ------------------------------------------------------------------ #
 # 4. Pull images
 # ------------------------------------------------------------------ #
-docker pull ghinwa555/oai-gnb-e2-chan@sha256:1bc3c341b498fdc2096721bd0b86f5bdd3ca985a930617163c611db5a9bc5501 \
-    || fail "gNB image pull failed"
+# gNB image. Default: the validated stock image (no scheduler control).
+# GNB_CTRL=1 selects the controllable scheduler: either GNB_CTRL_IMAGE (a pushed
+# image, pulled here) or an image built on this node by gnb/build-gnb-image.sh.
+STOCK_GNB_IMAGE="ghinwa555/oai-gnb-e2-chan@sha256:1bc3c341b498fdc2096721bd0b86f5bdd3ca985a930617163c611db5a9bc5501"
+GNB_IMAGE="${STOCK_GNB_IMAGE}"
+if [ "${GNB_CTRL:-0}" = 1 ]; then
+    if [ -n "${GNB_CTRL_IMAGE:-}" ]; then
+        echo "[CELL${CELL_IDX}] Pulling controllable gNB image ${GNB_CTRL_IMAGE}..."
+        docker pull "${GNB_CTRL_IMAGE}" || fail "controllable gNB image pull failed (${GNB_CTRL_IMAGE})"
+        GNB_IMAGE="${GNB_CTRL_IMAGE}"
+    else
+        echo "[CELL${CELL_IDX}] Building the controllable gNB image (log: /local/logs/gnb-build.log)..."
+        GNB_IMAGE="$(set -o pipefail; bash "${REPO_DIR}/gnb/build-gnb-image.sh" 2>&1 | tail -n 1)" \
+            || fail "controllable gNB image build failed (see /local/logs/gnb-build.log)"
+        docker image inspect "${GNB_IMAGE}" > /dev/null 2>&1 \
+            || fail "controllable gNB image '${GNB_IMAGE}' not found after build (see /local/logs/gnb-build.log)"
+    fi
+fi
+echo "[CELL${CELL_IDX}] gNB image: ${GNB_IMAGE}"
+echo "${GNB_IMAGE}" > /local/logs/GNB_IMAGE
+if [ "${GNB_IMAGE}" = "${STOCK_GNB_IMAGE}" ]; then
+    docker pull "${STOCK_GNB_IMAGE}" || fail "gNB image pull failed"
+fi
 docker pull ghinwa555/oai-nr-ue-chan@sha256:f00af9714f0e953c79d8e4def6b71d15d9af2c504bca1e0a8db2edbb59d6fb60 \
     || fail "UE image pull failed"
 
@@ -194,7 +215,7 @@ cat > "${COMPOSE}" <<EOF
 services:
   oai-gnb:
     container_name: ric5g-gnb-cell${CELL_IDX}
-    image: ghinwa555/oai-gnb-e2-chan@sha256:1bc3c341b498fdc2096721bd0b86f5bdd3ca985a930617163c611db5a9bc5501
+    image: ${GNB_IMAGE}
     network_mode: host
     cap_drop:
       - ALL

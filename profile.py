@@ -88,8 +88,9 @@ tour.Description(IG.Tour.TEXT,
     "modelling. One core node runs the CN + RIC; each cell node runs one "
     "E2-enabled, chanmod-capable gNB with its UEs colocated. Start xApps by hand "
     "after E2 registration and UE attachment. This profile provides the baseline "
-    "network and telemetry; a per-UE PRB or scheduler-policy actuator is not part "
-    "of it yet (see docs/SCHEDULER_CONTROL.md). "
+    "network and telemetry. An optional controllable downlink scheduler (per-UE "
+    "PRB shares and policy, changed at run time on the cell node; see "
+    "docs/SCHEDULER_CONTROL.md) is built on request; there is no E2 control path yet. "
     "PLMN 208/99, TAC=1, SST=1, DNN=oai.")
 tour.Instructions(IG.Tour.TEXT,
     "Bring-up is staged: the core node brings up the core network and then builds "
