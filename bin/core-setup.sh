@@ -335,6 +335,9 @@ grep -E "nearRT-RIC IP|Loading SM ID" /local/logs/nearRT-RIC.log
 
 touch "${READY_DIR}/ric-ready" /local/logs/CORE_READY
 
+# Collect the E2 service-model sources used by this build (never fails the setup).
+bash "${REPO_DIR}/bin/export-flexric-api.sh" "${OAI_SRC}" /local/logs/flexric-api.tar.gz || true
+
 # ------------------------------------------------------------------ #
 # Done. Cell nodes poll ric-ready and then start on their own.
 # ------------------------------------------------------------------ #

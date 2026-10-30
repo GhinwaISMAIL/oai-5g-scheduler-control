@@ -31,8 +31,15 @@ OAI_COMMIT="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["oa
 SRC_HASH="$(cd "${REPO_DIR}/gnb" && cat src/* patches/* | sha256sum | cut -c1-12)"
 IMAGE="${1:-ric5g/oai-gnb-ctrl:${OAI_COMMIT:0:8}-${SRC_HASH}}"
 
+push_image() {
+    [ -n "${PUSH_TO:-}" ] || return 0
+    docker tag "${IMAGE}" "${PUSH_TO}" && docker push "${PUSH_TO}" || fail "push to ${PUSH_TO} failed (docker login first)"
+    docker image inspect --format '[GNB-BUILD] pushed digest: {{index .RepoDigests 0}}' "${PUSH_TO}" || true
+}
+
 if docker image inspect "${IMAGE}" > /dev/null 2>&1 && [ "${FORCE_REBUILD:-0}" != 1 ]; then
     echo "[GNB-BUILD] ${IMAGE} already exists; nothing to build."
+    push_image
     echo "${IMAGE}"
     exit 0
 fi
@@ -71,10 +78,7 @@ docker build --target oai-gnb   --tag "${IMAGE}"       --file docker/Dockerfile.
 docker run --rm --entrypoint /bin/sh "${IMAGE}" -c 'grep -q "SCHED_CTRL" /opt/oai-gnb/bin/nr-softmodem' \
     || fail "built image does not contain the controllable scheduler"
 
-if [ -n "${PUSH_TO:-}" ]; then
-    docker tag "${IMAGE}" "${PUSH_TO}" && docker push "${PUSH_TO}" || fail "push to ${PUSH_TO} failed"
-    docker image inspect --format '[GNB-BUILD] pushed digest: {{index .RepoDigests 0}}' "${PUSH_TO}" || true
-fi
+push_image
 [ "${KEEP_BUILD_CACHE:-1}" = 1 ] || docker builder prune -f > /dev/null
 echo "[GNB-BUILD] done $(date)"
 echo "${IMAGE}"

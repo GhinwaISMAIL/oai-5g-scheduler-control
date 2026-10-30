@@ -130,32 +130,57 @@ PRB experiment. Scheduler control goes through the controllable gNB below.
 
 ## Controllable scheduler
 
-Build and start the gNB with the controllable downlink scheduler (details and
-verification status in `SCHEDULER_CONTROL.md`).
+The profile parameter `controllable_scheduler` (default on) builds the gNB with the
+controllable downlink scheduler (details and verification status in
+`SCHEDULER_CONTROL.md`). On a new reservation the cell node starts building the image
+as soon as Docker is up, while the core node builds the core network and the RIC, so
+the two waits overlap. A first build takes about 25 minutes and its log is
+`/local/logs/gnb-build.log`; the image tag ends up in `/local/logs/GNB_IMAGE`. The cell
+node starts its gNB when both the core is ready and the image exists. If the build
+fails, the cell reports `CELL_FAILED` rather than silently starting the stock gNB.
 
-On cell1, build the image once (tens of minutes; the log is
-`/local/logs/gnb-build.log`; the last line printed is the image tag). Use `nohup`
-so the build survives a closed terminal:
+To skip the build on later reservations, push the image once and give its name to the
+profile parameter `gnb_ctrl_image`. On cell1, after a successful build:
+
+```bash
+sudo docker login
+cd /local/repository
+sudo PUSH_TO=<registry-user>/oai-gnb-ctrl:<tag> bash gnb/build-gnb-image.sh | tail -n 2
+```
+
+The tag in `PUSH_TO` is yours to choose; use the output's `pushed digest` line to
+record what was pushed. The pushed image must contain the current `gnb/src` and
+`gnb/patches` (rebuild and push again after changing either). Instantiate the profile
+with `gnb_ctrl_image=<registry-user>/oai-gnb-ctrl:<tag>`; the image is then pulled in a
+minute instead of built. Set `controllable_scheduler` off to run the stock gNB.
+
+Check the cell after it reports ready:
+
+```bash
+cat /local/logs/GNB_IMAGE /local/logs/CELL_READY
+python3 bin/sched-ctl.py status        # lists both UEs with RNTIs, policy=pf
+sudo python3 bin/sched-ctl.py map --containers ric5g-ue-cell1-1,ric5g-ue-cell1-2
+```
+
+To rebuild or restart the cell by hand on a running reservation (the core and RIC stay
+up), start one build only, wait for its tag, then restart the cell:
 
 ```bash
 cd /local/repository && sudo git pull --ff-only
-sudo nohup bash gnb/build-gnb-image.sh > /local/logs/gnb-build.out 2>&1 &
-tail -n 3 /local/logs/gnb-build.out        # ends with the image tag when done
-docker image ls ric5g/oai-gnb-ctrl
-```
-
-To reuse the image on later reservations, push it once with
-`sudo PUSH_TO=<your-registry>/<name>:<tag> bash gnb/build-gnb-image.sh` after
-`docker login`, and start cells with `GNB_CTRL_IMAGE=<that name:tag>`.
-
-Then restart the cell with the controllable gNB. The core and RIC stay up:
-
-```bash
-cd /local/repository
+sudo bash gnb/build-gnb-image.sh | tail -n 1
 sudo GNB_CTRL=1 bash bin/node-setup.sh cell 1 1 2 uniform AWGN >> /local/logs/setup.log 2>&1
-cat /local/logs/GNB_IMAGE /local/logs/CELL_READY
-python3 bin/sched-ctl.py status        # lists both UEs with RNTIs, policy=pf
 ```
+
+## E2 control path (not implemented)
+
+The RIC and the monitoring xApps work, and the controllable gNB is built with the E2
+agent like the stock one (`--build-e2`). Changes to the scheduler are made on the cell
+node with `bin/sched-ctl.py`, not through E2: the pinned OAI MAC service model rejects
+control messages (`write_ctrl_mac_sm` is a stub). Adding the control message needs the
+exact FlexRIC definitions of the MAC (or RC) service model for the pinned commit. The
+core node writes them to `/local/logs/flexric-api.tar.gz` (list in
+`flexric-api.txt`) once the RIC is up; the same step can be repeated with
+`bash bin/export-flexric-api.sh`.
 
 Before changing any policy repeat the traffic test with the new image and policy
 `pf`: it has to give the same result as the stock image. Then use

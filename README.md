@@ -36,7 +36,8 @@ There is no handover prototype or extra cell in this repository's active profile
 | Embedded E2 agent and matched FlexRIC build | Included, with pinned radio artifact references |
 | Monitoring xApps and SQLite telemetry | Included through the FlexRIC build; start after E2 setup |
 | Bounded MGEN traffic and receiver observation safeguards | Included with local regression and loopback evidence |
-| xApp-enforced per-UE PRB shares or scheduler switching | **Not implemented in the pinned upstream control path** |
+| Controllable downlink scheduler on the gNB (policy, per-UE weights and caps, set on the cell node) | Built on the cell node at boot (profile parameter `controllable_scheduler`); validated in part on a live gNB, see `docs/SCHEDULER_CONTROL.md` |
+| xApp-enforced per-UE PRB shares or scheduler switching over E2 | **Not implemented**: the pinned upstream MAC control callback is a stub and no control message or xApp exists yet |
 
 The first scheduler target is configurable **downlink allocation between two
 competing UEs**, with the unmodified scheduler as the baseline. Inspecting the

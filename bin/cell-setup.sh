@@ -134,6 +134,28 @@ ip route replace 192.168.72.128/26 via ${CORE_LAN_IP} || fail "route to 192.168.
 ip route show | grep 192.168.7
 
 # ------------------------------------------------------------------ #
+# 2b. Controllable gNB image.  Default: the validated stock image (no scheduler
+#     control).  GNB_CTRL=1 selects the controllable scheduler: either
+#     GNB_CTRL_IMAGE (a pushed image, pulled in step 4) or an image built on this
+#     node by gnb/build-gnb-image.sh.  The build needs only Docker and the
+#     internet, so it starts now and runs while the core node is still bringing
+#     up the core network and the RIC; step 4 collects the result.
+# ------------------------------------------------------------------ #
+STOCK_GNB_IMAGE="ghinwa555/oai-gnb-e2-chan@sha256:1bc3c341b498fdc2096721bd0b86f5bdd3ca985a930617163c611db5a9bc5501"
+GNB_BUILD_PID=""
+GNB_BUILD_OUT="/local/logs/gnb-build.stdout"
+if [ "${GNB_CTRL:-0}" = 1 ]; then
+    if [ -n "${GNB_CTRL_IMAGE:-}" ]; then
+        [[ "${GNB_CTRL_IMAGE}" =~ ^[A-Za-z0-9][A-Za-z0-9._/:@-]*$ ]] || fail "invalid GNB_CTRL_IMAGE '${GNB_CTRL_IMAGE}'"
+    else
+        echo "[CELL${CELL_IDX}] Building the controllable gNB image in the background (log: /local/logs/gnb-build.log)..."
+        : > "${GNB_BUILD_OUT}"
+        bash "${REPO_DIR}/gnb/build-gnb-image.sh" > "${GNB_BUILD_OUT}" 2>&1 &
+        GNB_BUILD_PID=$!
+    fi
+fi
+
+# ------------------------------------------------------------------ #
 # 3. Wait for the core: it publishes ric-ready once the core network is up and
 #    the RIC is listening. The core build can take a long time, so this waits on
 #    that signal rather than on a fixed delay, and never starts the gNB without it.
@@ -151,10 +173,6 @@ ping -c1 -W2 "${AMF_IP}" > /dev/null 2>&1 \
 # ------------------------------------------------------------------ #
 # 4. Pull images
 # ------------------------------------------------------------------ #
-# gNB image. Default: the validated stock image (no scheduler control).
-# GNB_CTRL=1 selects the controllable scheduler: either GNB_CTRL_IMAGE (a pushed
-# image, pulled here) or an image built on this node by gnb/build-gnb-image.sh.
-STOCK_GNB_IMAGE="ghinwa555/oai-gnb-e2-chan@sha256:1bc3c341b498fdc2096721bd0b86f5bdd3ca985a930617163c611db5a9bc5501"
 GNB_IMAGE="${STOCK_GNB_IMAGE}"
 if [ "${GNB_CTRL:-0}" = 1 ]; then
     if [ -n "${GNB_CTRL_IMAGE:-}" ]; then
@@ -162,9 +180,10 @@ if [ "${GNB_CTRL:-0}" = 1 ]; then
         docker pull "${GNB_CTRL_IMAGE}" || fail "controllable gNB image pull failed (${GNB_CTRL_IMAGE})"
         GNB_IMAGE="${GNB_CTRL_IMAGE}"
     else
-        echo "[CELL${CELL_IDX}] Building the controllable gNB image (log: /local/logs/gnb-build.log)..."
-        GNB_IMAGE="$(set -o pipefail; bash "${REPO_DIR}/gnb/build-gnb-image.sh" 2>&1 | tail -n 1)" \
+        echo "[CELL${CELL_IDX}] Waiting for the controllable gNB image build (log: /local/logs/gnb-build.log)..."
+        wait "${GNB_BUILD_PID}" \
             || fail "controllable gNB image build failed (see /local/logs/gnb-build.log)"
+        GNB_IMAGE="$(tail -n 1 "${GNB_BUILD_OUT}")"
         docker image inspect "${GNB_IMAGE}" > /dev/null 2>&1 \
             || fail "controllable gNB image '${GNB_IMAGE}' not found after build (see /local/logs/gnb-build.log)"
     fi
