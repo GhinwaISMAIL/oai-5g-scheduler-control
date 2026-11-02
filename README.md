@@ -36,8 +36,8 @@ There is no handover prototype or extra cell in this repository's active profile
 | Embedded E2 agent and matched FlexRIC build | Included, with pinned radio artifact references |
 | Monitoring xApps and SQLite telemetry | Included through the FlexRIC build; start after E2 setup |
 | Bounded MGEN traffic and receiver observation safeguards | Included with local regression and loopback evidence |
-| Controllable downlink scheduler on the gNB (policy, per-UE weights and caps, set on the cell node) | Built on the cell node at boot (profile parameter `controllable_scheduler`); validated in part on a live gNB, see `docs/SCHEDULER_CONTROL.md` |
-| Scheduler policy, weights and caps set from an xApp over E2 (`xapp_sched_ctrl`, MAC service model control message) | Implemented and tested on the host (encoding, xApp, gNB handler against the real controller); not yet validated on a live reservation. The E2 acknowledgement only says that the gNB received the message: check the result with `bin/sched-ctl.py status` |
+| Controllable downlink scheduler on the gNB (policy, per-UE weights and caps, set on the cell node) | Built on the cell node at boot (profile parameter `controllable_scheduler`); measured on a live gNB in one reservation (two UEs, AWGN), see `docs/SCHEDULER_CONTROL.md` |
+| Scheduler policy, weights and caps set from an xApp over E2 (`xapp_sched_ctrl`, MAC service model control message) | Implemented, tested on the host and confirmed on one live reservation (policy, weights, caps, reset). The E2 acknowledgement only says that the gNB received the message: check the result with `bin/sched-ctl.py status` |
 
 The first scheduler target is configurable **downlink allocation between two
 competing UEs**, with the unmodified scheduler as the baseline. Inspecting the

@@ -102,7 +102,7 @@ Done (`gnb/test`, `tests/test_scheduler_control.py`):
 - The policy runs for thousands of slots against copies of the gNB scheduler helpers (`find_largest_free_block` and `get_rb_alloc` are the pinned code): 3:1 weights give 3:1 resource blocks with every block used, equal weights give 1:1, a cap is honoured, a small backlog frees capacity for the other UE, retransmissions are served first with their exact size, round robin alternates strictly, and a failed commit leaves no gap or accounting.
 - The same program runs under ThreadSanitizer, AddressSanitizer and UBSan with a control thread issuing commands while slots are scheduled.
 
-Live results so far (single cell, two UEs, 15 Mbit/s UDP downlink offered to each through the UPF, 20 s windows, counters read from the gNB; weights 3000 : 1000 where given):
+First reservation, earlier image (single cell, two UEs, 15 Mbit/s UDP downlink offered to each through the UPF, 20 s windows, counters read from the gNB; weights 3000 : 1000 where given). The `wshare` row is the version that split every slot and is superseded by the measurements further down:
 
 | Policy | Resource-block share UE1 / UE2 | Cell total | Resource blocks per scheduler call |
 | --- | --- | --- | --- |
@@ -113,6 +113,30 @@ Live results so far (single cell, two UEs, 15 Mbit/s UDP downlink offered to eac
 
 A cap of 30 on one UE gave it 28.7 % of the resource blocks (30 of 106 is 28.3 %).
 The receivers inside the UEs agree with the gNB counters on who got the larger share.
+
+Second reservation, image `ric5g/oai-gnb-ctrl:70508eba-c8747dfc6bc3` (single cell, two UEs, AWGN
+channel, 15 Mbit/s UDP offered to each UE for 60 s, `measure` over a 20 s window in the middle
+of the transfer). Every policy and weight was set from the xApp over E2 (`xapp_sched_ctrl`) and
+read back with `sched-ctl.py status`. `ric5g-ue-cell1-1` is `0x1c04` (12.1.1.3) and
+`ric5g-ue-cell1-2` is `0xa02c` (12.1.1.2); in the 3:1 runs `0x1c04` has weight 3000 and
+`0xa02c` has 1000.
+
+| Run | Share `0xa02c` / `0x1c04` | Cell total | Slots shared / one UE at a time |
+| --- | --- | --- | --- |
+| `pf` | 49.9 / 50.1 % | 19.07 Mbit/s | - |
+| `pf`, repeat at the end | 49.9 / 50.1 % | 19.02 Mbit/s | - |
+| `wshare`, equal weights | 50.0 / 50.0 % | 18.87 Mbit/s | 2626 / 2388 |
+| `wshare`, equal weights, repeat | 50.0 / 50.0 % | 18.91 Mbit/s | 2616 / 2407 |
+| `wshare`, 3:1 | 25.6 / 74.4 % | 19.29 Mbit/s | 102 / 4952 |
+| `wshare`, 3:1, repeat | 25.5 / 74.5 % | 18.64 Mbit/s | 98 / 4788 |
+
+What this shows, and what it does not:
+
+- The cell total of `wshare` is within about 2 % of `pf` in this session, against a loss of about 25 % before the change that makes the sharing fraction depend only on ACK/NACK refusals. The run-to-run spread of the total is about 3 %, so a difference of 1 to 2 % is not resolved.
+- With equal weights the slot is shared in about half of the contested slots (48 to 54 %). With 3:1 weights the fraction falls to its floor (2 %), the refusals fall in slot indices 5, 6, 15 and 16, and the policy behaves like `wrr`: the split is 74.5 : 25.5, at the limit that the ACK/NACK allowance permits, not 75 : 25 by design.
+- The receivers agree with the gNB: in the 3:1 runs the UE with weight 3000 received 12.6 to 12.8 Mbit/s without loss, the other 6.8 to 7.1 Mbit/s averaged over a longer drain with 24 to 27 % of its datagrams lost.
+- The `pf` total here (about 19 Mbit/s at 104.6 to 104.8 resource blocks per call) is lower than in the first reservation (24.4 Mbit/s at 104.9). The stock policy shows the same, so it is not caused by the scheduler; the cause was not determined. Compare only runs of the same session.
+- Two runs per `wshare` configuration, three of `pf`, one reservation. `wrr`, `rr` and caps were not repeated with this image; their results above are from the earlier image.
 
 The acknowledgement limit. Measured on the live gNB (two UEs, saturated downlink):
 a `wshare` that split every slot between both UEs used only 74 to 78 % of the
@@ -137,15 +161,15 @@ many lost every grant and the current fraction, plus the refusals by cause and b
 slot index. A consequence of the limit: weights cannot be followed beyond what the
 allowance permits. With an allowance of 5 grants per UE in 7 slots a UE can hold at
 most 5/7 of the slots (71 %), so a 3:1 weight ratio is met as 71:29. This is
-verified against a host-side model of the allowance; the live gNB measurement is
-still to be done (cell total close to `pf`, shares following the weights as far as
-the allowance allows). `wrr` remains the choice for time-multiplexed weights.
+verified against a host-side model of the allowance and then on a live gNB (results above:
+cell total close to `pf`, shares following the weights as far as the allowance allows).
+`wrr` remains the choice for time-multiplexed weights.
 
 Not done yet, and required before relying on it:
 
 - Building the gNB image (the stand-in headers in `gnb/test/oai_stub` are transcribed from the pinned source; the real compile happens in the image build).
-- Running it on a live gNB: the resource-block shares above are properties of the policy given the gNB's candidate list; with real traffic they must be measured with `measure` alongside the delivered traffic.
-- The E2 path on a live reservation: the encoding, the xApp and the gNB handler are tested on the host (`tests/test_e2_control.py`, `gnb/test`), and both patches are checked against the pinned sources at image build time, but a command has not yet been sent through a running RIC and gNB.
+- Longer and repeated runs, other channel conditions and more than two UEs: the live results above are one reservation, two UEs, AWGN.
+- The E2 path is confirmed on one reservation: policy, weight, cap and reset sent by `xapp_sched_ctrl` through the RIC were applied by the gNB (read back with `sched-ctl.py status`), a command for an unknown RNTI was refused by the gNB while the xApp still reported it as delivered, and an invalid word was rejected by the xApp. It has not been tried with several gNBs or with the E42 subscription load of the monitoring xApps running at the same time.
 - Uplink scheduling is not controlled. Handovers and multi-cell coordination are outside scope.
 
 The sources are compiled into the OAI gNB and keep the gNB's licensing in mind
@@ -176,5 +200,5 @@ by sending arbitrary control requests to a live gNB.
 ## Remaining boundary
 
 The monitoring xApps remain read-only. Control goes through the local endpoint
-above, directly or from `xapp_sched_ctrl` over E2; the E2 path has not been
-confirmed on a live reservation yet.
+above, directly or from `xapp_sched_ctrl` over E2; the E2 path was confirmed on one
+reservation (see the verification status).

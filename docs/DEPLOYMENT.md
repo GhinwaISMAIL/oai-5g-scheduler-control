@@ -204,12 +204,14 @@ acknowledgement of the E2 message, not of the scheduling change: the gNB agent
 returns no control outcome. Check the result on the cell node with
 `python3 bin/sched-ctl.py status` (the version number increases with every accepted
 change) and in the gNB log, which has a line `[E2 Agent]: MAC control "..." applied`
-or `refused` for every command. Do not start the control xApp before the gNB is
-registered, and do not run monitoring xApps before then either.
+or `refused` for every command; in a container that line goes to a buffered stream and
+can appear late, so `status` is the check to rely on. Do not start the control xApp
+before the gNB is registered, and do not run monitoring xApps before then either.
 
-This path has been tested on the host only (the xApp against a stand-in for the
-FlexRIC API, the gNB handler against the real controller); it has to be confirmed on a
-live reservation before it is relied on.
+The path was tested on the host (the xApp against a stand-in for the FlexRIC API, the
+gNB handler against the real controller, the header with the compiler flags of the OAI
+build) and confirmed on one live reservation: policy, weights, cap and reset reached
+the scheduler, and a refused command shows up only in `status`.
 
 Before changing any policy repeat the traffic test with the new image and policy
 `pf`: it has to give the same result as the stock image. Then use
