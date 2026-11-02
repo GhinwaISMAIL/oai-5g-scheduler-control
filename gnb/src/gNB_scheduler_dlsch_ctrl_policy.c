@@ -348,7 +348,8 @@ static int ctrl_wshare(const nr_dl_sched_params_t *params, nr_dl_candidate_t *ca
  * slots and gives the other slots to one UE at a time, least served relative to
  * its weight first (the long-run split then follows the weights either way).
  * The fraction is tuned from what the MAC accepts: a slot in which every grant
- * was refused lowers it a lot, a refused grant a little, a clean shared slot
+ * was refused for lack of an ACK/NACK occasion lowers it a lot, one such refused
+ * grant a little, a clean shared slot
  * raises it slowly, and it never drops to zero so that the limit keeps being
  * probed. */
 static int ctrl_wshare_adaptive(const nr_dl_sched_params_t *params, nr_dl_candidate_t *candidates, int n_candidates, int n_sched)
@@ -370,6 +371,7 @@ static int ctrl_wshare_adaptive(const nr_dl_sched_params_t *params, nr_dl_candid
   }
 
   const uint64_t fail_before = g_state.commit_fail;
+  const uint64_t pucch_before = g_state.fail_pucch;
   const int sched_before = n_sched;
   if (shared)
     n_sched = ctrl_wshare(params, candidates, n_candidates, n_sched);
@@ -380,17 +382,21 @@ static int ctrl_wshare_adaptive(const nr_dl_sched_params_t *params, nr_dl_candid
 
   const int got = n_sched - sched_before;
   const uint64_t fails = g_state.commit_fail - fail_before;
+  /* only a missing ACK/NACK occasion says the allowance is used up; a missing
+   * PDCCH candidate (seen in fixed slots of the frame) has nothing to do with sharing */
+  const uint64_t pucch_fails = g_state.fail_pucch - pucch_before;
   int share = (int)g_state.ws_share_milli;
   if (shared)
     g_state.ws_shared_slots++;
   else
     g_state.ws_single_slots++;
-  if (got == 0 && fails > 0) {
+  if (got == 0 && fails > 0)
     g_state.ws_lost_slots++;
+  if (got == 0 && pucch_fails > 0) {
     share -= 60;
-  } else if (fails > 0) {
+  } else if (pucch_fails > 0) {
     share -= 20;
-  } else if (shared && got >= 2) {
+  } else if (shared && fails == 0 && got >= 2) {
     share += 2;
   }
   if (share < NR_CTRL_WS_SHARE_MIN)

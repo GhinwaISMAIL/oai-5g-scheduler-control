@@ -383,6 +383,29 @@ static void test_budget(void)
   run_budget(3, 7, 14000, 1000, 1000, &util, &share1, &lost, &milli);
   CHECK(util > 0.78 && util < 0.87);
   CHECK(milli >= NR_CTRL_WS_SHARE_MIN);
+
+  /* grants refused only for lack of a PDCCH candidate say nothing about sharing:
+   * the fraction must not fall; ACK/NACK refusals of the same UE must lower it */
+  char r[4096];
+  for (int pass = 0; pass < 2; pass++) {
+    ctl("RESET", r, sizeof(r));
+    ctl("POLICY wshare", r, sizeof(r));
+    stub_commit_fail_rnti = 0x1001;
+    stub_fail_is_cce = pass == 0;
+    for (int s = 0; s < 2000; s++) {
+      sim_slot_no = s;
+      sim_slot_prepare(2, 1000000);
+      sim_slot(2, 4);
+    }
+    stub_commit_fail_rnti = 0;
+    stub_fail_is_cce = 0;
+    sim_slot_no = 0;
+    ctl("GET", r, sizeof(r));
+    if (pass == 0)
+      CHECK(get_field(r, "ws_share_milli=") >= NR_CTRL_WS_SHARE_INIT);
+    else
+      CHECK(get_field(r, "ws_share_milli=") == NR_CTRL_WS_SHARE_MIN);
+  }
 }
 
 static void test_policy(void)

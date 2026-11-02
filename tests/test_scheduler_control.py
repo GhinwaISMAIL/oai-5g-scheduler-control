@@ -144,3 +144,9 @@ def test_cell_setup_defaults_to_the_stock_image_and_uses_the_selected_one():
     assert '[ "${GNB_CTRL:-0}" = 1 ]' in text
     assert "    image: ${GNB_IMAGE}\n    network_mode: host" in text
     assert text.count("ghinwa555/oai-gnb-e2-chan@sha256") == 1
+
+
+def test_build_script_refuses_to_run_twice_at_once():
+    script = (GNB / "build-gnb-image.sh").read_text()
+    assert "flock -n 9" in script
+    assert script.index("flock -n 9") < script.index("git clone")

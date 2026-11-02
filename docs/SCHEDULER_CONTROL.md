@@ -100,8 +100,11 @@ before the end of the period and the remaining slots are lost for everybody.
 
 `wshare` therefore shares a slot in frequency only in a fraction of the contested
 slots and gives the others to one UE at a time. The fraction starts at 50 %, drops
-by 6 % points when every grant of a slot was refused, by 2 % points when a grant was
-refused, grows by 0.2 % points per clean shared slot, and never goes below 2 %.
+by 6 % points when every grant of a slot was refused for lack of an ACK/NACK
+occasion, by 2 % points when one grant was, grows by 0.2 % points per clean shared
+slot, and never goes below 2 %. Refusals for lack of a PDCCH candidate (they occur
+in fixed slots of the frame, for example slot indices 0 and 14 in the measurements)
+are counted but do not change the fraction.
 `status` and `measure` show how many slots were shared, how many went to one UE, how
 many lost every grant and the current fraction, plus the refusals by cause and by
 slot index. A consequence of the limit: weights cannot be followed beyond what the

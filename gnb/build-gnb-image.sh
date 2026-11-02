@@ -22,14 +22,24 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OAI_SRC_DIR="${OAI_SRC_DIR:-/opt/oai-gnb-src}"
 LOG_DIR="${LOG_DIR:-/local/logs}"
 mkdir -p "${LOG_DIR}"
-exec > >(tee -a "${LOG_DIR}/gnb-build.log") 2>&1
 
 fail() { echo "[GNB-BUILD] ERROR: $*" >&2; exit 1; }
+
+# Only one build at a time: two would reset and rebuild the same source tree.
+exec 9> /var/lock/gnb-build.lock
+flock -n 9 || fail "another gNB image build is already running (see ${LOG_DIR}/gnb-build.log)"
+rm -f "${LOG_DIR}/gnb-build.tag"
+
+exec > >(tee -a "${LOG_DIR}/gnb-build.log") 2>&1
 
 OAI_COMMIT="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["oai_revision"])' "${REPO_DIR}/etc/stack-versions.json")" \
     || fail "cannot read oai_revision from etc/stack-versions.json"
 SRC_HASH="$(cd "${REPO_DIR}/gnb" && cat src/* patches/* | sha256sum | cut -c1-12)"
 IMAGE="${1:-ric5g/oai-gnb-ctrl:${OAI_COMMIT:0:8}-${SRC_HASH}}"
+
+# The tag is also written to a file: the caller must not depend on the last line of
+# the (asynchronously tee'd) output.
+publish_tag() { echo "${IMAGE}" > "${LOG_DIR}/gnb-build.tag"; }
 
 push_image() {
     [ -n "${PUSH_TO:-}" ] || return 0
@@ -40,6 +50,7 @@ push_image() {
 if docker image inspect "${IMAGE}" > /dev/null 2>&1 && [ "${FORCE_REBUILD:-0}" != 1 ]; then
     echo "[GNB-BUILD] ${IMAGE} already exists; nothing to build."
     push_image
+    publish_tag
     echo "${IMAGE}"
     exit 0
 fi
@@ -81,4 +92,5 @@ docker run --rm --entrypoint /bin/sh "${IMAGE}" -c 'grep -q "SCHED_CTRL" /opt/oa
 push_image
 [ "${KEEP_BUILD_CACHE:-1}" = 1 ] || docker builder prune -f > /dev/null
 echo "[GNB-BUILD] done $(date)"
+publish_tag
 echo "${IMAGE}"

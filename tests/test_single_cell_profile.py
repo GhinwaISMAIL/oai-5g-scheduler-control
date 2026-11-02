@@ -131,6 +131,13 @@ def test_cell_setup_builds_the_image_while_waiting_for_the_core():
     assert start < wait_core < collect
 
 
+def test_image_tag_is_passed_through_a_file_not_the_tee_output():
+    cell = (ROOT / 'bin' / 'cell-setup.sh').read_text()
+    build = (ROOT / 'gnb' / 'build-gnb-image.sh').read_text()
+    assert 'cat /local/logs/gnb-build.tag' in cell
+    assert build.count('publish_tag') >= 3  # defined, early exit, normal exit
+
+
 def test_flexric_api_export_collects_control_interface_files(tmp_path):
     src = tmp_path / 'oai'
     files = [

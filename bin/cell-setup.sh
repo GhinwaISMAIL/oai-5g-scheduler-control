@@ -150,6 +150,7 @@ if [ "${GNB_CTRL:-0}" = 1 ]; then
     else
         echo "[CELL${CELL_IDX}] Building the controllable gNB image in the background (log: /local/logs/gnb-build.log)..."
         : > "${GNB_BUILD_OUT}"
+        rm -f /local/logs/gnb-build.tag
         bash "${REPO_DIR}/gnb/build-gnb-image.sh" > "${GNB_BUILD_OUT}" 2>&1 &
         GNB_BUILD_PID=$!
     fi
@@ -183,7 +184,8 @@ if [ "${GNB_CTRL:-0}" = 1 ]; then
         echo "[CELL${CELL_IDX}] Waiting for the controllable gNB image build (log: /local/logs/gnb-build.log)..."
         wait "${GNB_BUILD_PID}" \
             || fail "controllable gNB image build failed (see /local/logs/gnb-build.log)"
-        GNB_IMAGE="$(tail -n 1 "${GNB_BUILD_OUT}")"
+        GNB_IMAGE="$(cat /local/logs/gnb-build.tag 2> /dev/null)"
+        [ -n "${GNB_IMAGE}" ] || fail "the gNB image build left no image tag (see /local/logs/gnb-build.log)"
         docker image inspect "${GNB_IMAGE}" > /dev/null 2>&1 \
             || fail "controllable gNB image '${GNB_IMAGE}' not found after build (see /local/logs/gnb-build.log)"
     fi
