@@ -15,7 +15,8 @@
   "core_release_family": "v2.0.0",
   "capabilities": {
     "monitoring_xapps_included": true,
-    "e2_to_prb_actuator_implemented": false,
+    "e2_to_prb_actuator_implemented": true,
+    "e2_scheduler_control_validated_on_live_gnb": false,
     "new_repository_deployment_validated": false,
     "local_dl_prb_policy_control_implemented": true,
     "local_dl_prb_policy_control_validated_on_live_gnb": false

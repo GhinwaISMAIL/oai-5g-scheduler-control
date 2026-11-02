@@ -113,9 +113,10 @@ tour.Description(IG.Tour.TEXT,
     "after E2 registration and UE attachment. This profile provides the baseline "
     "network and telemetry. The gNB carries a controllable downlink scheduler "
     "(per-UE PRB shares and policy, changed at run time on the cell node with "
-    "bin/sched-ctl.py; see docs/SCHEDULER_CONTROL.md); it is built on the cell node "
-    "at boot unless a pre-built image is given. Changes are made on the cell node, "
-    "not over E2: the E2 control path is not implemented yet. "
+    "bin/sched-ctl.py, or from an xApp over E2 with xapp_sched_ctrl on the core node; "
+    "see docs/SCHEDULER_CONTROL.md); it is built on the cell node "
+    "at boot unless a pre-built image is given. An E2 acknowledgement only means "
+    "that the gNB received the command: check it with bin/sched-ctl.py status. "
     "PLMN 208/99, TAC=1, SST=1, DNN=oai.")
 tour.Instructions(IG.Tour.TEXT,
     "Bring-up is staged: the core node brings up the core network and then builds "

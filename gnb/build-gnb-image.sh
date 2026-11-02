@@ -10,7 +10,8 @@
 #   KEEP_BUILD_CACHE=1  keep BuildKit cache after the build
 #
 # The image is built from the stock OAI Dockerfiles at the pinned commit, with
-# gnb/patches/*.patch applied and gnb/src/*.{c,h} added to the MAC directory.
+# gnb/patches/*.patch applied to the OAI tree, gnb/patches/*.fxpatch applied to the
+# FlexRIC submodule and gnb/src/*.{c,h} added to the MAC directory.
 # The default tag contains the OAI commit and a hash of everything in gnb/src and
 # gnb/patches, so a changed source gives a different tag.  Takes tens of minutes
 # the first time (UHD and the full OAI build); later builds reuse the compiler cache.
@@ -77,6 +78,16 @@ for p in "${REPO_DIR}"/gnb/patches/*.patch; do
     git -C "${OAI_SRC_DIR}" apply --check "${p}" || fail "patch ${p} does not apply to ${OAI_COMMIT}"
     git -C "${OAI_SRC_DIR}" apply "${p}" || fail "patch ${p} failed"
 done
+
+# Patches to the FlexRIC submodule (*.fxpatch, paths relative to the submodule root).
+# The reset above does not touch the submodule's working tree, so restore it first.
+FLEXRIC_SRC="${OAI_SRC_DIR}/openair2/E2AP/flexric"
+git -C "${FLEXRIC_SRC}" reset --hard --quiet || fail "cannot reset the FlexRIC submodule"
+for p in "${REPO_DIR}"/gnb/patches/*.fxpatch; do
+    [ -e "${p}" ] || continue
+    git -C "${FLEXRIC_SRC}" apply --check "${p}" || fail "patch ${p} does not apply to the FlexRIC submodule"
+    git -C "${FLEXRIC_SRC}" apply "${p}" || fail "patch ${p} failed"
+done
 cp "${REPO_DIR}"/gnb/src/*.c "${REPO_DIR}"/gnb/src/*.h "${MAC_DIR}/"
 
 # --- images (OAI's documented three-step build) ---------------------------------
@@ -88,6 +99,8 @@ docker build --target oai-gnb   --tag "${IMAGE}"       --file docker/Dockerfile.
 # --- check that the binary carries the controller ------------------------------
 docker run --rm --entrypoint /bin/sh "${IMAGE}" -c 'grep -q "SCHED_CTRL" /opt/oai-gnb/bin/nr-softmodem' \
     || fail "built image does not contain the controllable scheduler"
+docker run --rm --entrypoint /bin/sh "${IMAGE}" -c 'grep -rlq "is not a scheduler command" /opt/oai-gnb /usr/local/lib 2> /dev/null' \
+    || fail "built image does not contain the E2 scheduler control handler"
 
 push_image
 [ "${KEEP_BUILD_CACHE:-1}" = 1 ] || docker builder prune -f > /dev/null

@@ -171,16 +171,45 @@ sudo bash gnb/build-gnb-image.sh | tail -n 1
 sudo GNB_CTRL=1 bash bin/node-setup.sh cell 1 1 2 uniform AWGN >> /local/logs/setup.log 2>&1
 ```
 
-## E2 control path (not implemented)
+## E2 control path
 
 The RIC and the monitoring xApps work, and the controllable gNB is built with the E2
-agent like the stock one (`--build-e2`). Changes to the scheduler are made on the cell
-node with `bin/sched-ctl.py`, not through E2: the pinned OAI MAC service model rejects
-control messages (`write_ctrl_mac_sm` is a stub). Adding the control message needs the
-exact FlexRIC definitions of the MAC (or RC) service model for the pinned commit. The
-core node writes them to `/local/logs/flexric-api.tar.gz` (list in
-`flexric-api.txt`) once the RIC is up; the same step can be repeated with
-`bash bin/export-flexric-api.sh`.
+agent like the stock one (`--build-e2`). The pinned MAC service model carries two
+32-bit numbers in a control message; they are used to carry a scheduler command
+(encoding in `gnb/src/nr_dl_ctrl_e2.h`). Three pieces make it work, and all three are
+installed by the normal setup:
+
+| Where | What | Installed by |
+| --- | --- | --- |
+| core node, FlexRIC | `xapp_sched_ctrl` is added next to `xapp_mac_ctrl`; the RIC-side check that only accepts header 1 and message 42 is removed | `bin/core-setup.sh` through `bin/patch-flexric-sched-ctrl.py` |
+| gNB image, FlexRIC agent | the two matching checks in the agent are removed | `gnb/patches/0003-flexric-mac-control-agent.fxpatch` |
+| gNB image, OAI | `write_ctrl_mac_sm` translates the two numbers into a text command and sends it to the local control endpoint | `gnb/patches/0002-e2-mac-control.patch` |
+
+On the core node, after the cell reports ready and the gNB is registered with the RIC
+(`/local/logs/` and the RIC log show the E2 setup request), from the FlexRIC build
+directory:
+
+```bash
+cd /opt/oai-src/openair2/E2AP/flexric
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl policy wshare
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl weight <rnti> 3000
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl cap <rnti> 20
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl reset
+```
+
+`<rnti>` is the hexadecimal RNTI printed by `bin/sched-ctl.py map` on the cell node;
+`weight "*" <w>` sets the default weight. The xApp prints the node it used and
+"Scheduler command delivered" when the RIC reported success. That is an
+acknowledgement of the E2 message, not of the scheduling change: the gNB agent
+returns no control outcome. Check the result on the cell node with
+`python3 bin/sched-ctl.py status` (the version number increases with every accepted
+change) and in the gNB log, which has a line `[E2 Agent]: MAC control "..." applied`
+or `refused` for every command. Do not start the control xApp before the gNB is
+registered, and do not run monitoring xApps before then either.
+
+This path has been tested on the host only (the xApp against a stand-in for the
+FlexRIC API, the gNB handler against the real controller); it has to be confirmed on a
+live reservation before it is relied on.
 
 Before changing any policy repeat the traffic test with the new image and policy
 `pf`: it has to give the same result as the stock image. Then use

@@ -1,0 +1,37 @@
+diff --git a/openair2/E2AP/RAN_FUNCTION/CUSTOMIZED/ran_func_mac.c b/openair2/E2AP/RAN_FUNCTION/CUSTOMIZED/ran_func_mac.c
+index 4a37130..832467e 100644
+--- a/openair2/E2AP/RAN_FUNCTION/CUSTOMIZED/ran_func_mac.c
++++ b/openair2/E2AP/RAN_FUNCTION/CUSTOMIZED/ran_func_mac.c
+@@ -3,6 +3,7 @@
+  */
+ 
+ #include "ran_func_mac.h"
++#include "openair2/LAYER2/NR_MAC_gNB/nr_dl_ctrl_e2.h"
+ #include <assert.h>
+ 
+ static
+@@ -106,10 +107,23 @@ void read_mac_setup_sm(void* data)
+   assert(0 !=0 && "Not supported");
+ }
+ 
++/* A MAC control message carries a downlink scheduler command in its two words (see
++ * nr_dl_ctrl_e2.h); it is handed to the local scheduler control endpoint. */
+ sm_ag_if_ans_t write_ctrl_mac_sm(void const* data)
+ {
+   assert(data != NULL);
+-  printf("write_ctrl callback for MAC SM: operation not supported\n");
++  mac_ctrl_req_data_t const* req = (mac_ctrl_req_data_t const*)data;
++  char text[128];
++  char reply[256];
++  if (nr_ctrl_e2_to_text(req->hdr.dummy, req->msg.action, text, sizeof(text)) != 0) {
++    printf("[E2 Agent]: MAC control ignored: header 0x%08x, message 0x%08x is not a scheduler command\n",
++           (unsigned)req->hdr.dummy,
++           (unsigned)req->msg.action);
++  } else if (nr_ctrl_e2_send(text, reply, sizeof(reply)) == 0) {
++    printf("[E2 Agent]: MAC control \"%s\" applied\n", text);
++  } else {
++    printf("[E2 Agent]: MAC control \"%s\" refused: %s\n", text, reply[0] ? reply : "no answer from the scheduler control endpoint");
++  }
+   sm_ag_if_ans_t ans = {0};
+   return ans;
+ }

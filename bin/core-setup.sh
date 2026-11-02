@@ -201,7 +201,7 @@ echo "[CORE] Core network up (cn-ready published)."
 #    A stamp records what was built. If it matches the pinned commits and the
 #    current patch scripts, the build is skipped.
 # ------------------------------------------------------------------ #
-PATCH_HASH="$(cat "${REPO_DIR}"/bin/patch-flexric-*.py | sha256sum | cut -d' ' -f1)"
+PATCH_HASH="$(cat "${REPO_DIR}"/bin/patch-flexric-*.py "${REPO_DIR}/xapp/xapp_sched_ctrl.c" "${REPO_DIR}/gnb/src/nr_dl_ctrl_e2.h" | sha256sum | cut -d' ' -f1)"
 BUILD_STAMP="${OAI_COMMIT} ${FLEXRIC_COMMIT} ${PATCH_HASH} KPM_V3_00 E2AP_V3 SQLITE3_XAPP"
 STAMP_FILE="${OAI_SRC}/.ric-build-stamp"
 
@@ -263,6 +263,8 @@ else
     python3 "${REPO_DIR}/bin/patch-flexric-iapp-log.py" \
         "${FLEXRIC_DIR}/src/ric/iApps/stdout.c" \
         || fail "patch-flexric-iapp-log failed"
+    python3 "${REPO_DIR}/bin/patch-flexric-sched-ctrl.py" "${FLEXRIC_DIR}" \
+        || fail "patch-flexric-sched-ctrl failed"
     # The patch scripts insert SQL schema strings with trailing whitespace.
     # git diff --check exits non-zero on whitespace errors, so normalise first.
     sed -i 's/[[:space:]]*$//' \

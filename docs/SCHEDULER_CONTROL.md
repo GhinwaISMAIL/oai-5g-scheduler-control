@@ -3,9 +3,9 @@
 The profile deploys one cell with two competing UEs. The gNB can run a
 controllable downlink scheduler (`GNB_CTRL=1`, see `DEPLOYMENT.md`) whose policy,
 per-UE weights and per-UE resource-block caps are changed at run time and read
-back from the gNB. The control path is local to the cell node; there is no E2
-control path yet (see the findings below for why the stock E2 MAC control cannot
-be used).
+back from the gNB. They can be set on the cell node with `bin/sched-ctl.py`, or from
+an xApp over E2 (section "Control over E2"); both reach the same state through the
+same local endpoint.
 
 ## What is controlled
 
@@ -52,6 +52,29 @@ version number in `status` increases with every accepted change. RNTIs belong to
 one attachment: when a UE disconnects its settings are dropped, so apply weights
 again after UEs re-register.
 
+## Control over E2
+
+`xapp_sched_ctrl` (run on the core node, see `DEPLOYMENT.md`) sends a MAC service
+model control message to every connected gNB that registered the MAC service model.
+The message has two 32-bit words, packed as follows.
+
+| Command | Header word | Message word |
+| --- | --- | --- |
+| `policy <pf\|rr\|wshare\|wrr>` | `0x53430001` | policy id: 0 pf, 1 rr, 2 wshare, 3 wrr |
+| `weight <rnti\|*> <1..65535>` | `0x53430002` | `rnti << 16 \| weight`, RNTI 0 = default weight |
+| `cap <rnti> <0\|5..275>` | `0x53430003` | `rnti << 16 \| cap` |
+| `reset` | `0x53430004` | 0 |
+
+The gNB turns the words into the text command of the local endpoint and sends it
+there, so a command over E2 has exactly the validation and effect of one from
+`sched-ctl.py`. Words that are not a valid scheduler command (the stock example sends
+header 1, message 42) are ignored and logged. The weight range over E2 is smaller than
+on the cell node (65535 against 1000000).
+
+An acknowledgement received by the xApp means that the gNB received the message. The
+FlexRIC agent of the pinned revision returns no control outcome, so a refused command
+(unknown RNTI, value out of range) is visible only in the gNB log and in `status`.
+
 ## Implementation
 
 | File | Role |
@@ -62,6 +85,10 @@ again after UEs re-register.
 | `gnb/patches/0001-controllable-dl-rb-policy.patch` | registers the sources in the OAI build and installs the policy at MAC start |
 | `gnb/build-gnb-image.sh` | builds the gNB image from the stock OAI Dockerfiles at the pinned commit with the above applied |
 | `bin/sched-ctl.py` | client with read-back, `measure` and UE-to-RNTI `map` |
+| `gnb/src/nr_dl_ctrl_e2.h` | encoding of a command in the two words of the MAC control message, shared by the xApp and the gNB |
+| `gnb/patches/0002-e2-mac-control.patch` | `write_ctrl_mac_sm` hands the command to the local endpoint |
+| `gnb/patches/0003-flexric-mac-control-agent.fxpatch` | removes the two checks in the gNB's FlexRIC agent that only allow header 1 and message 42 |
+| `xapp/xapp_sched_ctrl.c`, `bin/patch-flexric-sched-ctrl.py` | the control xApp and its installation into the FlexRIC build |
 
 State is read and written only with the MAC scheduler lock held, so a control
 command is applied between two scheduling slots.
@@ -118,7 +145,7 @@ Not done yet, and required before relying on it:
 
 - Building the gNB image (the stand-in headers in `gnb/test/oai_stub` are transcribed from the pinned source; the real compile happens in the image build).
 - Running it on a live gNB: the resource-block shares above are properties of the policy given the gNB's candidate list; with real traffic they must be measured with `measure` alongside the delivered traffic.
-- The E2 path: an E2 service-model control message and a matching xApp. The stock E2 MAC control is a stub in the gNB; implementing the message on both ends needs changes in the FlexRIC service model and the xApp.
+- The E2 path on a live reservation: the encoding, the xApp and the gNB handler are tested on the host (`tests/test_e2_control.py`, `gnb/test`), and both patches are checked against the pinned sources at image build time, but a command has not yet been sent through a running RIC and gNB.
 - Uplink scheduling is not controlled. Handovers and multi-cell coordination are outside scope.
 
 The sources are compiled into the OAI gNB and keep the gNB's licensing in mind
@@ -130,7 +157,7 @@ OAI revision: `70508ebaf52f2aae420566d380c6537f2efb9f0c`.
 
 | Interface | Source behavior | Consequence |
 | --- | --- | --- |
-| Customized MAC control | `write_ctrl_mac_sm` prints that the operation is unsupported | Do not send a purported PRB command through it and label it applied |
+| Customized MAC control | `write_ctrl_mac_sm` prints that the operation is unsupported; the agent and the RIC accept only header 1 and message 42 | Replaced by the E2 path above; a stock `xapp_mac_ctrl` message is ignored by the new handler, and an acknowledgement never shows that scheduling changed |
 | Customized slice control | Add/delete/association requests are logged without applying NR scheduling changes | A received request/control outcome does not establish enforcement |
 | Customized slice reader | Uses synthetic fill data | Do not use those slice values as real scheduler read-back |
 | RC control | Advertises bearer/QoS mapping; handler asserts action ID 2 and parses/logs values | Does not implement a PRB-share control path |
@@ -148,6 +175,6 @@ by sending arbitrary control requests to a live gNB.
 
 ## Remaining boundary
 
-The monitoring xApps remain read-only. Control currently goes through the local
-endpoint above; an xApp-driven path needs the E2 extension described in the
-findings and is not implemented here.
+The monitoring xApps remain read-only. Control goes through the local endpoint
+above, directly or from `xapp_sched_ctrl` over E2; the E2 path has not been
+confirmed on a live reservation yet.

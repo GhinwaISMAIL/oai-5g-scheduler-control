@@ -15,6 +15,7 @@
 #include "gNB_scheduler_dlsch_ctrl_policy.h"
 #include "gNB_scheduler_dlsch_default_policies.h"
 #include "nr_dl_ctrl_alloc.h"
+#include "nr_dl_ctrl_e2.h"
 #include "nr_dl_ctrl_state.h"
 #include "stubs.h"
 
@@ -591,6 +592,126 @@ static void test_policy(void)
 
 }
 
+/* ------------------------------------------------------------ E2 transport */
+
+/* One command as the gNB's E2 handler delivers it: two words in, text out, sent to the
+ * live control endpoint.  Returns 0 when the controller answered OK. */
+static int e2_deliver(uint32_t hdr, uint32_t act, char *reply, size_t size)
+{
+  char text[128];
+  if (nr_ctrl_e2_to_text(hdr, act, text, sizeof(text)) != 0) {
+    snprintf(reply, size, "not a scheduler command");
+    return -2;
+  }
+  return nr_ctrl_e2_send(text, reply, size);
+}
+
+/* The "weight=<n> explicit=.. cap=<n>" part of one UE's line of the GET reply. */
+static long ue_field(const char *get, const char *rnti, const char *key)
+{
+  char pat[32];
+  snprintf(pat, sizeof(pat), "rnti=%s ", rnti);
+  const char *p = strstr(get, pat);
+  return p ? get_field(p, key) : -1;
+}
+
+static void test_e2(void)
+{
+  char r[4096], g[4096];
+  uint32_t hdr, act;
+  const char *err = NULL;
+
+  sim_setup(2);
+  ctl("RESET", r, sizeof(r));
+
+  /* the words the xApp builds, against values written out by hand */
+  CHECK(nr_ctrl_e2_pack("policy", "wshare", NULL, &hdr, &act, &err) == 0 && hdr == 0x53430001u && act == 2);
+  CHECK(nr_ctrl_e2_pack("policy", "wrr", NULL, &hdr, &act, &err) == 0 && act == 3);
+  CHECK(nr_ctrl_e2_pack("policy", "pf", NULL, &hdr, &act, &err) == 0 && act == 0);
+  CHECK(nr_ctrl_e2_pack("policy", "rr", NULL, &hdr, &act, &err) == 0 && act == 1);
+  CHECK(nr_ctrl_e2_pack("weight", "1001", "3000", &hdr, &act, &err) == 0 && hdr == 0x53430002u && act == 0x10010bb8u);
+  CHECK(nr_ctrl_e2_pack("weight", "*", "7", &hdr, &act, &err) == 0 && act == 7);
+  CHECK(nr_ctrl_e2_pack("cap", "1002", "20", &hdr, &act, &err) == 0 && hdr == 0x53430003u && act == 0x10020014u);
+  CHECK(nr_ctrl_e2_pack("reset", NULL, NULL, &hdr, &act, &err) == 0 && hdr == 0x53430004u && act == 0);
+
+  /* words the xApp refuses to build */
+  CHECK(nr_ctrl_e2_pack("policy", "bogus", NULL, &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("policy", NULL, NULL, &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("weight", "1001", "0", &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("weight", "1001", "65536", &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("weight", "0", "5", &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("weight", "10000", "5", &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("weight", "zz", "5", &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("weight", "1001", "5x", &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("cap", "1001", "3", &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("cap", "1001", "276", &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("cap", "*", "20", &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("nope", NULL, NULL, &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack(NULL, NULL, NULL, &hdr, &act, &err) != 0);
+
+  /* words the gNB refuses to translate (the stock example sends header 1, message 42) */
+  char text[128];
+  CHECK(nr_ctrl_e2_to_text(1, 42, text, sizeof(text)) != 0);
+  CHECK(nr_ctrl_e2_to_text(0x53430000u, 0, text, sizeof(text)) != 0);
+  CHECK(nr_ctrl_e2_to_text(0x53430005u, 0, text, sizeof(text)) != 0);
+  CHECK(nr_ctrl_e2_to_text(0x53430001u, 4, text, sizeof(text)) != 0);
+  CHECK(nr_ctrl_e2_to_text(0x53430002u, 0x10010000u, text, sizeof(text)) != 0); /* weight 0 */
+  CHECK(nr_ctrl_e2_to_text(0x53430003u, 0x00000014u, text, sizeof(text)) != 0); /* cap without rnti */
+  CHECK(nr_ctrl_e2_to_text(0x53430003u, 0x10010003u, text, sizeof(text)) != 0); /* cap 3 */
+  CHECK(nr_ctrl_e2_to_text(0x53430004u, 1, text, sizeof(text)) != 0);
+  CHECK(nr_ctrl_e2_to_text(0x53430001u, 2, text, 4) != 0); /* buffer too small */
+
+  /* the text for each command */
+  CHECK(nr_ctrl_e2_to_text(0x53430001u, 3, text, sizeof(text)) == 0 && !strcmp(text, "POLICY wrr"));
+  CHECK(nr_ctrl_e2_to_text(0x53430002u, 0x0000000au, text, sizeof(text)) == 0 && !strcmp(text, "WEIGHT * 10"));
+  CHECK(nr_ctrl_e2_to_text(0x53430002u, 0xa6a4ffffu, text, sizeof(text)) == 0 && !strcmp(text, "WEIGHT a6a4 65535"));
+  CHECK(nr_ctrl_e2_to_text(0x53430003u, 0x00e30005u, text, sizeof(text)) == 0 && !strcmp(text, "CAP 00e3 5"));
+
+  /* end to end against the live controller: xApp words -> gNB translation -> state */
+  CHECK(nr_ctrl_e2_pack("policy", "wshare", NULL, &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  ctl("GET", g, sizeof(g));
+  CHECK(strstr(g, "policy=wshare") != NULL);
+
+  CHECK(nr_ctrl_e2_pack("weight", "1001", "3000", &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  CHECK(nr_ctrl_e2_pack("weight", "1002", "1000", &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  CHECK(nr_ctrl_e2_pack("cap", "1002", "20", &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  ctl("GET", g, sizeof(g));
+  CHECK(ue_field(g, "0x1001", "weight=") == 3000 && ue_field(g, "0x1001", "cap=") == 0);
+  CHECK(ue_field(g, "0x1002", "weight=") == 1000 && ue_field(g, "0x1002", "cap=") == 20);
+
+  CHECK(nr_ctrl_e2_pack("weight", "*", "250", &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  ctl("GET", g, sizeof(g));
+  CHECK(get_field(g, "default_weight=") == 250);
+
+  CHECK(nr_ctrl_e2_pack("cap", "1002", "0", &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  ctl("GET", g, sizeof(g));
+  CHECK(ue_field(g, "0x1002", "cap=") == 0);
+
+  /* the controller's own refusals reach the caller */
+  CHECK(nr_ctrl_e2_pack("weight", "7777", "5", &hdr, &act, &err) == 0); /* valid words, unknown UE */
+  CHECK(e2_deliver(hdr, act, r, sizeof(r)) != 0 && !strncmp(r, "ERR", 3));
+  CHECK(e2_deliver(1, 42, r, sizeof(r)) == -2);
+
+  CHECK(nr_ctrl_e2_pack("policy", "wrr", NULL, &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  ctl("GET", g, sizeof(g));
+  CHECK(strstr(g, "policy=wrr") != NULL);
+
+  CHECK(nr_ctrl_e2_pack("reset", NULL, NULL, &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  ctl("GET", g, sizeof(g));
+  CHECK(strstr(g, "policy=pf") != NULL && get_field(g, "default_weight=") == NR_CTRL_DEFAULT_WEIGHT);
+
+  /* nothing listening: the sender reports failure instead of hanging */
+  char *old_port = strdup(getenv("SCHED_CTRL_PORT"));
+  setenv("SCHED_CTRL_PORT", "9", 1);
+  struct timeval t0, t1;
+  gettimeofday(&t0, NULL);
+  CHECK(nr_ctrl_e2_send("PING", r, sizeof(r)) != 0);
+  gettimeofday(&t1, NULL);
+  CHECK((t1.tv_sec - t0.tv_sec) < 4);
+  setenv("SCHED_CTRL_PORT", old_port, 1);
+  free(old_port);
+}
+
 /* A second gNB object cannot be controlled; verify the single-instance guard. */
 static void test_second_instance(void)
 {
@@ -659,6 +780,7 @@ int main(void)
   test_protocol();
   test_policy();
   test_budget();
+  test_e2();
   test_second_instance();
   test_many_ues();
   test_concurrency();

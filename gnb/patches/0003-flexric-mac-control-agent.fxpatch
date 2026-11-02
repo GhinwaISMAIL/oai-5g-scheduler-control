@@ -1,0 +1,15 @@
+diff --git a/src/sm/mac_sm/mac_sm_agent.c b/src/sm/mac_sm/mac_sm_agent.c
+index 5a94ac6..be1d0aa 100644
+--- a/src/sm/mac_sm/mac_sm_agent.c
++++ b/src/sm/mac_sm/mac_sm_agent.c
+@@ -102,10 +102,8 @@ sm_ctrl_out_data_t on_control_mac_sm_ag(sm_agent_t const* sm_agent, sm_ctrl_req_
+   sm_mac_agent_t* sm = (sm_mac_agent_t*) sm_agent;
+ 
+   mac_ctrl_hdr_t hdr = mac_dec_ctrl_hdr(&sm->enc, data->len_hdr, data->ctrl_hdr);
+-  assert(hdr.dummy == 1 && "Only dummy == 1 supported ");
+ 
+   mac_ctrl_msg_t msg = mac_dec_ctrl_msg(&sm->enc, data->len_msg, data->ctrl_msg);
+-  assert(msg.action == 42 && "Only action number 42 supported");
+ 
+ //  sm_ag_if_wr_t wr = {.type = CONTROL_SM_AG_IF_WR };
+ //  wr.ctrl.type = MAC_CTRL_REQ_V0; 

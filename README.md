@@ -37,13 +37,14 @@ There is no handover prototype or extra cell in this repository's active profile
 | Monitoring xApps and SQLite telemetry | Included through the FlexRIC build; start after E2 setup |
 | Bounded MGEN traffic and receiver observation safeguards | Included with local regression and loopback evidence |
 | Controllable downlink scheduler on the gNB (policy, per-UE weights and caps, set on the cell node) | Built on the cell node at boot (profile parameter `controllable_scheduler`); validated in part on a live gNB, see `docs/SCHEDULER_CONTROL.md` |
-| xApp-enforced per-UE PRB shares or scheduler switching over E2 | **Not implemented**: the pinned upstream MAC control callback is a stub and no control message or xApp exists yet |
+| Scheduler policy, weights and caps set from an xApp over E2 (`xapp_sched_ctrl`, MAC service model control message) | Implemented and tested on the host (encoding, xApp, gNB handler against the real controller); not yet validated on a live reservation. The E2 acknowledgement only says that the gNB received the message: check the result with `bin/sched-ctl.py status` |
 
 The first scheduler target is configurable **downlink allocation between two
 competing UEs**, with the unmodified scheduler as the baseline. Inspecting the
-exact pinned source exposed unsupported or placeholder control callbacks; sending
-an E2 control message is not evidence that allocation changed. See
-[docs/SCHEDULER_CONTROL.md](docs/SCHEDULER_CONTROL.md). No unsupported scheduler
+exact pinned source exposed unsupported or placeholder control callbacks, so the
+MAC control path is implemented here on both ends; sending an E2 control message is
+still not evidence that allocation changed, and every command has to be checked on
+the cell. See [docs/SCHEDULER_CONTROL.md](docs/SCHEDULER_CONTROL.md). No scheduler
 xApp is auto-started, and no fixed-share enforcement is claimed.
 
 ## Deploy later on a separate reservation
