@@ -142,6 +142,19 @@ ip route show | grep 192.168.7
 #     up the core network and the RIC; step 4 collects the result.
 # ------------------------------------------------------------------ #
 STOCK_GNB_IMAGE="ghinwa555/oai-gnb-e2-chan@sha256:1bc3c341b498fdc2096721bd0b86f5bdd3ca985a930617163c611db5a9bc5501"
+# A pulled image carries a hash of gnb/src and gnb/patches in its tag; warn when it
+# differs from the checkout, because the image then lacks (or has extra) scheduler code.
+check_image_sources() {
+    local want have
+    [[ "$1" =~ :[0-9a-f]{8}-([0-9a-f]{12})$ ]] || return 0
+    have="${BASH_REMATCH[1]}"
+    want="$(cd "${REPO_DIR}/gnb" && cat src/* patches/* | sha256sum | cut -c1-12)"
+    if [ "${have}" != "${want}" ]; then
+        echo "[CELL${CELL_IDX}] WARNING: ${1} was built from different gNB sources (image ${have}, this checkout ${want})." >&2
+    fi
+    return 0
+}
+
 GNB_BUILD_PID=""
 GNB_BUILD_OUT="/local/logs/gnb-build.stdout"
 if [ "${GNB_CTRL:-0}" = 1 ]; then
@@ -178,8 +191,20 @@ GNB_IMAGE="${STOCK_GNB_IMAGE}"
 if [ "${GNB_CTRL:-0}" = 1 ]; then
     if [ -n "${GNB_CTRL_IMAGE:-}" ]; then
         echo "[CELL${CELL_IDX}] Pulling controllable gNB image ${GNB_CTRL_IMAGE}..."
-        docker pull "${GNB_CTRL_IMAGE}" || fail "controllable gNB image pull failed (${GNB_CTRL_IMAGE})"
-        GNB_IMAGE="${GNB_CTRL_IMAGE}"
+        if docker pull "${GNB_CTRL_IMAGE}"; then
+            GNB_IMAGE="${GNB_CTRL_IMAGE}"
+            check_image_sources "${GNB_CTRL_IMAGE}"
+        else
+            echo "[CELL${CELL_IDX}] WARNING: pull of ${GNB_CTRL_IMAGE} failed; building the image on this node instead (about 25 minutes)." >&2
+            : > "${GNB_BUILD_OUT}"
+            rm -f /local/logs/gnb-build.tag
+            bash "${REPO_DIR}/gnb/build-gnb-image.sh" > "${GNB_BUILD_OUT}" 2>&1 \
+                || fail "pull of ${GNB_CTRL_IMAGE} failed and the build failed too (see /local/logs/gnb-build.log)"
+            GNB_IMAGE="$(cat /local/logs/gnb-build.tag 2> /dev/null)"
+            [ -n "${GNB_IMAGE}" ] || fail "the gNB image build left no image tag (see /local/logs/gnb-build.log)"
+            docker image inspect "${GNB_IMAGE}" > /dev/null 2>&1 \
+                || fail "controllable gNB image '${GNB_IMAGE}' not found after build (see /local/logs/gnb-build.log)"
+        fi
     else
         echo "[CELL${CELL_IDX}] Waiting for the controllable gNB image build (log: /local/logs/gnb-build.log)..."
         wait "${GNB_BUILD_PID}" \

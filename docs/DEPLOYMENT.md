@@ -139,20 +139,27 @@ the two waits overlap. A first build takes about 25 minutes and its log is
 node starts its gNB when both the core is ready and the image exists. If the build
 fails, the cell reports `CELL_FAILED` rather than silently starting the stock gNB.
 
-To skip the build on later reservations, push the image once and give its name to the
-profile parameter `gnb_ctrl_image`. On cell1, after a successful build:
+The profile parameter `gnb_ctrl_image` names a pushed image that is pulled in a minute
+instead of built; it defaults to the image of the last validated build. If the pull
+fails, the cell builds the image itself, and a warning in `setup.log` says so. If the
+tag's hash differs from the checkout's `gnb/src` and `gnb/patches`, the cell warns that
+the image was built from other sources. Empty the parameter to always build, and set
+`controllable_scheduler` off to run the stock gNB.
+
+After changing anything in `gnb/src` or `gnb/patches` the default is stale (a test
+fails until it is updated). Build on cell1, push, and put the new tag in `profile.py`:
 
 ```bash
-sudo docker login
+sudo docker login -u <registry-user>
 cd /local/repository
 sudo PUSH_TO=<registry-user>/oai-gnb-ctrl:<tag> bash gnb/build-gnb-image.sh | tail -n 2
+sudo docker logout
 ```
 
-The tag in `PUSH_TO` is yours to choose; use the output's `pushed digest` line to
-record what was pushed. The pushed image must contain the current `gnb/src` and
-`gnb/patches` (rebuild and push again after changing either). Instantiate the profile
-with `gnb_ctrl_image=<registry-user>/oai-gnb-ctrl:<tag>`; the image is then pulled in a
-minute instead of built. Set `controllable_scheduler` off to run the stock gNB.
+`<tag>` is the tag the build prints (`ric5g/oai-gnb-ctrl:<tag>`, without the
+`ric5g/oai-gnb-ctrl:` prefix); the output's `pushed digest` line records what was pushed.
+Use an access token as the password and make the repository public, because the nodes
+pull it without logging in.
 
 Check the cell after it reports ready:
 

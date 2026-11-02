@@ -40,8 +40,9 @@ pc.defineParameter("controllable_scheduler",
                    portal.ParameterType.BOOLEAN, True)
 pc.defineParameter("gnb_ctrl_image",
                    "Pre-built controllable gNB image to pull instead of building it on the cell node "
-                   "(for example ghinwa555/oai-gnb-ctrl:TAG; empty = build, about 25 minutes)",
-                   portal.ParameterType.STRING, "")
+                   "(the tag ends with a hash of gnb/src and gnb/patches; empty = build on the node, "
+                   "about 25 minutes; if the pull fails the node builds it)",
+                   portal.ParameterType.STRING, "ghinwa555/oai-gnb-ctrl:70508eba-c8747dfc6bc3")
 
 params = pc.bindParameters()
 
@@ -58,10 +59,6 @@ if params.channel_initial_mode not in ("uniform", "gradient"):
 if params.gnb_ctrl_image and not re.match(r"^[A-Za-z0-9][A-Za-z0-9._/:@-]*$", params.gnb_ctrl_image):
     pc.reportError(portal.ParameterError(
         "gnb_ctrl_image must be an image reference such as name/repo:tag",
-        ["gnb_ctrl_image"]))
-if params.gnb_ctrl_image and not params.controllable_scheduler:
-    pc.reportError(portal.ParameterError(
-        "gnb_ctrl_image needs controllable_scheduler to be enabled",
         ["gnb_ctrl_image"]))
 pc.verifyParameters()
 
@@ -114,8 +111,8 @@ tour.Description(IG.Tour.TEXT,
     "network and telemetry. The gNB carries a controllable downlink scheduler "
     "(per-UE PRB shares and policy, changed at run time on the cell node with "
     "bin/sched-ctl.py, or from an xApp over E2 with xapp_sched_ctrl on the core node; "
-    "see docs/SCHEDULER_CONTROL.md); it is built on the cell node "
-    "at boot unless a pre-built image is given. An E2 acknowledgement only means "
+    "see docs/SCHEDULER_CONTROL.md); it comes from a pre-built image unless that "
+    "is cleared or cannot be pulled. An E2 acknowledgement only means "
     "that the gNB received the command: check it with bin/sched-ctl.py status. "
     "PLMN 208/99, TAC=1, SST=1, DNN=oai.")
 tour.Instructions(IG.Tour.TEXT,
@@ -123,10 +120,11 @@ tour.Instructions(IG.Tour.TEXT,
     "and starts the RIC. The cell node waits for the core to report ready (up to "
     "60 min) before starting its gNB. Check /local/logs/setup.log on each node. "
     "Outcome markers: CORE_READY / CORE_FAILED on the core, CELL_READY / "
-    "CELL_FAILED on the cell. The first boot builds the controllable gNB image on "
-    "the cell node while the core is brought up (log: /local/logs/gnb-build.log); "
-    "the image tag is written to /local/logs/GNB_IMAGE. To re-run after a repository update, see "
-    "docs/DEPLOYMENT.md.")
+    "CELL_FAILED on the cell. The controllable gNB image is pulled from the "
+    "gnb_ctrl_image parameter; when it is empty or cannot be pulled it is built on "
+    "the cell node while the core is brought up (log: /local/logs/gnb-build.log). "
+    "The image in use is written to /local/logs/GNB_IMAGE. To re-run after a "
+    "repository update, see docs/DEPLOYMENT.md.")
 request.addTour(tour)
 
 pc.printRequestRSpec()

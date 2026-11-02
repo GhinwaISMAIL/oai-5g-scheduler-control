@@ -82,10 +82,10 @@ def test_default_reservation_has_one_core_one_cell_two_ues(monkeypatch):
 
 def test_controllable_scheduler_is_requested_on_the_cell_only_by_default(monkeypatch):
     nodes, defaults = render_profile(monkeypatch)
-    assert defaults['controllable_scheduler'] is True and defaults['gnb_ctrl_image'] == ''
+    assert defaults['controllable_scheduler'] is True and defaults['gnb_ctrl_image'] == DEFAULT_GNB_IMAGE
     assert 'GNB_CTRL' not in nodes[0].services[0]['command']
-    assert 'sudo GNB_CTRL=1 bash /local/repository/bin/node-setup.sh cell 1 1 2 ' in nodes[1].services[0]['command']
-    assert 'GNB_CTRL_IMAGE' not in nodes[1].services[0]['command']
+    assert 'sudo GNB_CTRL=1 GNB_CTRL_IMAGE=%s bash /local/repository/bin/node-setup.sh cell 1 1 2 ' % DEFAULT_GNB_IMAGE in nodes[1].services[0]['command']
+    assert 'sudo GNB_CTRL=1 GNB_CTRL_IMAGE=%s bash ' % DEFAULT_GNB_IMAGE in nodes[1].services[0]['command']
 
 
 def test_prebuilt_image_and_opt_out(monkeypatch):
@@ -93,12 +93,14 @@ def test_prebuilt_image_and_opt_out(monkeypatch):
     assert 'sudo GNB_CTRL=1 GNB_CTRL_IMAGE=ghinwa555/oai-gnb-ctrl:abc-123 bash ' in nodes[1].services[0]['command']
     nodes, _ = render_profile(monkeypatch, overrides={'controllable_scheduler': False})
     assert 'GNB_CTRL' not in nodes[1].services[0]['command']
+    nodes, _ = render_profile(monkeypatch, overrides={'gnb_ctrl_image': ''})
+    assert 'sudo GNB_CTRL=1 bash ' in nodes[1].services[0]['command']
+    assert 'GNB_CTRL_IMAGE' not in nodes[1].services[0]['command']
 
 
 @pytest.mark.parametrize('overrides', [
     {'gnb_ctrl_image': 'x; reboot'},
     {'gnb_ctrl_image': 'a b'},
-    {'gnb_ctrl_image': 'ghinwa555/oai-gnb-ctrl:t', 'controllable_scheduler': False},
 ])
 def test_profile_rejects_unsafe_or_inconsistent_image(monkeypatch, overrides):
     with pytest.raises(ValueError):
@@ -158,3 +160,54 @@ def test_flexric_api_export_collects_control_interface_files(tmp_path):
     missing = subprocess.run(['bash', str(ROOT / 'bin' / 'export-flexric-api.sh'), str(tmp_path / 'none'), str(tmp_path / 'b.tar.gz')],
                              capture_output=True, text=True)
     assert missing.returncode == 0 and not (tmp_path / 'b.tar.gz').exists()
+
+
+DEFAULT_GNB_IMAGE = 'ghinwa555/oai-gnb-ctrl:70508eba-c8747dfc6bc3'
+
+
+def test_default_gnb_image_matches_the_sources_in_this_checkout():
+    """The default image must have been built from the current gnb/src and gnb/patches.
+
+    The tag is <oai commit, 8 characters>-<12 characters of the hash the build script
+    computes over gnb/src and gnb/patches>.  When this fails, build and push a new image
+    (docs/DEPLOYMENT.md) and put its tag in profile.py and here.
+    """
+    import hashlib
+    import json
+    gnb = ROOT / 'gnb'
+    data = b''.join(path.read_bytes() for sub in ('src', 'patches') for path in sorted((gnb / sub).glob('*')))
+    oai = json.loads((ROOT / 'etc' / 'stack-versions.json').read_text())['oai_revision']
+    expected = 'ghinwa555/oai-gnb-ctrl:%s-%s' % (oai[:8], hashlib.sha256(data).hexdigest()[:12])
+    assert DEFAULT_GNB_IMAGE == expected
+
+
+def test_cell_setup_falls_back_to_a_build_and_warns_about_stale_images():
+    text = (ROOT / 'bin' / 'cell-setup.sh').read_text()
+    assert subprocess.run(['bash', '-n', str(ROOT / 'bin' / 'cell-setup.sh')]).returncode == 0
+    assert 'building the image on this node instead' in text
+    assert 'check_image_sources "${GNB_CTRL_IMAGE}"' in text
+
+
+def _image_check(tmp_path, tag):
+    text = (ROOT / 'bin' / 'cell-setup.sh').read_text()
+    start = text.index('check_image_sources() {')
+    function = text[start:text.index('\n}\n', start) + 3]
+    repo = tmp_path / 'repo'
+    (repo / 'gnb' / 'src').mkdir(parents=True, exist_ok=True)
+    (repo / 'gnb' / 'patches').mkdir(exist_ok=True)
+    (repo / 'gnb' / 'src' / 'a.c').write_text('int a;\n')
+    (repo / 'gnb' / 'patches' / 'p.patch').write_text('patch\n')
+    import hashlib
+    good = hashlib.sha256(b'int a;\npatch\n').hexdigest()[:12]
+    script = 'REPO_DIR=%s CELL_IDX=1\n%s\ncheck_image_sources "$1"\n' % (repo, function)
+    run = subprocess.run(['bash', '-c', script, 'x', tag.replace('GOOD', good)], capture_output=True, text=True)
+    return run
+
+
+def test_stale_image_check_warns_only_on_a_different_hash(tmp_path):
+    ok = _image_check(tmp_path, 'u/r:70508eba-GOOD')
+    assert ok.returncode == 0 and ok.stderr == ''
+    stale = _image_check(tmp_path, 'u/r:70508eba-000000000000')
+    assert stale.returncode == 0 and 'different gNB sources' in stale.stderr
+    other = _image_check(tmp_path, 'u/r:latest')
+    assert other.returncode == 0 and other.stderr == ''
