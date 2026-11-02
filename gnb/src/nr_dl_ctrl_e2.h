@@ -209,8 +209,11 @@ static inline int nr_ctrl_e2_send(const char *text, char *reply, size_t reply_si
     ssize_t r = recv(fd, buf, sizeof(buf) - 1, 0);
     if (r > 0) {
       buf[r] = '\0';
-      if (reply_size > 0)
-        snprintf(reply, reply_size, "%s", buf);
+      if (reply_size > 0) {
+        size_t n = (size_t)r < reply_size - 1 ? (size_t)r : reply_size - 1;
+        memcpy(reply, buf, n);
+        reply[n] = '\0';
+      }
       rc = strncmp(buf, "OK", 2) == 0 ? 0 : -1;
     }
   }

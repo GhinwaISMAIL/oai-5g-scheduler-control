@@ -207,6 +207,109 @@ class XappTest(unittest.TestCase):
         self.assertEqual(self.words(result), [])
 
 
+# The flags of the OAI build (the cmake line of the gNB image) apply -Werror to every warning.
+OAI_FLAGS = (
+    "-O2 -Wall -Wextra -Werror -Wunused-parameter -Wno-unused-result -std=gnu11 "
+    "-fno-strict-aliasing -funroll-loops -fno-delete-null-pointer-checks"
+).split()
+
+# The shape of the gNB handler in gnb/patches/0002-e2-mac-control.patch: fixed-size
+# buffers handed to the helpers of the header.
+HANDLER_UNIT = r"""
+#include <stdio.h>
+#include <stdint.h>
+#include "nr_dl_ctrl_e2.h"
+int handler(uint32_t h, uint32_t a)
+{
+  char text[128];
+  char reply[256];
+  if (nr_ctrl_e2_to_text(h, a, text, sizeof(text)) != 0) {
+    printf("ignored %08x %08x\n", (unsigned)h, (unsigned)a);
+  } else if (nr_ctrl_e2_send(text, reply, sizeof(reply)) == 0) {
+    printf("applied %s\n", text);
+  } else {
+    printf("refused %s: %s\n", text, reply[0] ? reply : "no answer");
+  }
+  return 0;
+}
+"""
+
+
+@unittest.skipUnless(shutil.which("gcc"), "gcc is not available")
+class OaiBuildFlagsTest(unittest.TestCase):
+    def test_header_compiles_with_the_oai_build_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "handler.c"
+            source.write_text(HANDLER_UNIT)
+            for fortify in ("-D_FORTIFY_SOURCE=0", "-D_FORTIFY_SOURCE=2", "-D_FORTIFY_SOURCE=3"):
+                with self.subTest(fortify=fortify):
+                    result = subprocess.run(
+                        ["gcc", *OAI_FLAGS, fortify, "-I", str(HEADER.parent), "-c", str(source), "-o", os.devnull],
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_reply_is_truncated_not_overrun(self) -> None:
+        # a reply longer than the caller's buffer is cut and terminated
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "reply.c"
+            source.write_text(
+                r"""
+#include <arpa/inet.h>
+#include <assert.h>
+#include <pthread.h>
+#include "nr_dl_ctrl_e2.h"
+static int fd;
+static void *serve(void *unused)
+{
+  char b[64];
+  struct sockaddr_in from;
+  socklen_t n = sizeof(from);
+  (void)unused;
+  ssize_t r = recvfrom(fd, b, sizeof(b), 0, (struct sockaddr *)&from, &n);
+  if (r > 0) {
+    char big[600];
+    memset(big, 'x', sizeof(big));
+    memcpy(big, "OK ", 3);
+    sendto(fd, big, sizeof(big), 0, (struct sockaddr *)&from, n);
+  }
+  return NULL;
+}
+int main(void)
+{
+  struct sockaddr_in a = {.sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+  socklen_t l = sizeof(a);
+  fd = socket(AF_INET, SOCK_DGRAM, 0);
+  assert(bind(fd, (struct sockaddr *)&a, sizeof(a)) == 0);
+  assert(getsockname(fd, (struct sockaddr *)&a, &l) == 0);
+  char port[16];
+  snprintf(port, sizeof(port), "%d", ntohs(a.sin_port));
+  setenv("SCHED_CTRL_PORT", port, 1);
+  pthread_t t;
+  pthread_create(&t, NULL, serve, NULL);
+  char reply[32];
+  memset(reply, 'z', sizeof(reply));
+  int rc = nr_ctrl_e2_send("PING", reply, sizeof(reply));
+  pthread_join(t, NULL);
+  assert(rc == 0);
+  assert(strlen(reply) == sizeof(reply) - 1);
+  assert(strncmp(reply, "OK xxx", 6) == 0);
+  return 0;
+}
+"""
+            )
+            binary = Path(directory) / "reply"
+            build = subprocess.run(
+                ["gcc", "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined", "-I", str(HEADER.parent), str(source), "-o", str(binary), "-lpthread"],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(build.returncode, 0, build.stderr)
+            run = subprocess.run([str(binary)], capture_output=True, text=True, timeout=20)
+            self.assertEqual(run.returncode, 0, run.stderr)
+
+
 class PatchScriptTest(unittest.TestCase):
     RIC_SOURCE = (
         "static void f(void)\n{\n"
