@@ -1,7 +1,7 @@
 # Slice-aware downlink scheduling: design
 
-Status: design for review. Nothing described here is implemented, and
-`SCHEDULER_CONTROL.md` does not claim it.
+Status: step A (below) is implemented and tested on the host, on branch `slicing`; it has
+not been run on a live gNB (`SLICING_LIVE_TEST.md`). Steps B and C are not started.
 
 ## Goal
 

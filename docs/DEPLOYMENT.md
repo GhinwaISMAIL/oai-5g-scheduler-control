@@ -201,6 +201,11 @@ cd /opt/oai-src/openair2/E2AP/flexric
 ./build/examples/xApp/c/ctrl/xapp_sched_ctrl policy wshare
 ./build/examples/xApp/c/ctrl/xapp_sched_ctrl weight <rnti> 3000
 ./build/examples/xApp/c/ctrl/xapp_sched_ctrl cap <rnti> 20
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl policy slice
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl slice-weight 1 3000
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl slice-cap 2 30
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl assoc <rnti> 1          # none removes the association
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl nssai-map 2 none 1      # S-NSSAI rule, sd in hex or none
 ./build/examples/xApp/c/ctrl/xapp_sched_ctrl reset
 ```
 

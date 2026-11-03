@@ -6,9 +6,13 @@ on the host network, so run this on the cell node).
 
   sched-ctl.py ping
   sched-ctl.py status
-  sched-ctl.py policy pf|rr|wrr|wshare
+  sched-ctl.py policy pf|rr|wrr|wshare|slice
   sched-ctl.py weight <rnti|*> <1..1000000>
   sched-ctl.py cap <rnti> <0|5..275>
+  sched-ctl.py slice <0..7> weight <1..1000000>
+  sched-ctl.py slice <0..7> cap <0|5..275>
+  sched-ctl.py assoc <rnti> <0..7|->               slice of a UE, - removes the association
+  sched-ctl.py nssai-map <sst> <sd|none> <0..7|->  slice for UEs with that S-NSSAI (sd in hex), - deletes the rule
   sched-ctl.py reset
   sched-ctl.py measure [--seconds N]
   sched-ctl.py map --containers NAME[,NAME...] [--target IP]
@@ -16,7 +20,7 @@ on the host network, so run this on the cell node).
 Every state change is read back with a second request and the command fails
 unless the gNB reports the requested value.  `measure` reports the resource
 blocks the MAC actually scheduled per UE over a window, which is the evidence
-for any allocation claim.
+for any allocation claim; with slices in use it also reports them per slice.
 """
 import argparse
 import socket
@@ -59,7 +63,17 @@ def parse_status(text):
     header = _kv(lines[0].split())
     ues = []
     header["slots"] = []
+    header["slices"] = []
+    header["rules"] = []
     for line in lines[1:]:
+        if line.startswith("SLICE "):
+            sl = _kv(line.split())
+            for key in ("id", "weight", "cap", "granted_rbs", "granted_slots", "ues"):
+                sl[key] = int(sl[key])
+            header["slices"].append(sl)
+        if line.startswith("RULE "):
+            rule = _kv(line.split())
+            header["rules"].append({"sst": int(rule["sst"]), "sd": int(rule["sd"], 16), "slice": int(rule["slice"])})
         if line.startswith("SLOT "):
             parts = line.split()
             kv = _kv(parts)
@@ -69,6 +83,10 @@ def parse_status(text):
             ue["rnti"] = int(ue["rnti"], 16)
             for key in ("weight", "explicit", "cap", "granted_rbs", "granted_slots", "commit_fail", "mac_dl_rbs", "mac_dl_rbs_retx", "mac_dl_sdu_bytes"):
                 ue[key] = int(ue[key])
+            # reported by images that know slices; an older image has a single slice 0
+            ue["slice"] = int(ue.get("slice", 0))
+            ue.setdefault("source", "default")
+            ue.setdefault("nssai", "-")
             ues.append(ue)
     return header, ues
 
@@ -90,10 +108,19 @@ def print_status(header, ues, out=sys.stdout):
     if any(f for _, _, f in header["slots"]):
         print("grants by slot index in the frame (calls/refused): "
               + "  ".join(f"{i}:{c}/{f}" for i, c, f in header["slots"]), file=out)
-    print(f"{'rnti':<8}{'weight':>8}{'set':>5}{'cap':>6}{'granted_rbs':>14}{'mac_dl_rbs':>12}{'retx_rbs':>10}{'dl_sdu_bytes':>14}", file=out)
+    if header["slices"]:
+        print(f"{'slice':<8}{'weight':>8}{'cap':>6}{'granted_rbs':>14}{'ues':>5}", file=out)
+        for sl in header["slices"]:
+            print(f"{sl['id']:<8}{sl['weight']:>8}{sl['cap']:>6}{sl['granted_rbs']:>14}{sl['ues']:>5}", file=out)
+    for rule in header["rules"]:
+        print(f"rule: S-NSSAI sst={rule['sst']} sd={'none' if rule['sd'] == 0xffffff else format(rule['sd'], '06x')} -> slice {rule['slice']}", file=out)
+    show_slice = bool(header["slices"] or header["rules"])
+    print(f"{'rnti':<8}{'weight':>8}{'set':>5}{'cap':>6}{'granted_rbs':>14}{'mac_dl_rbs':>12}{'retx_rbs':>10}{'dl_sdu_bytes':>14}"
+          + (f"{'slice':>7}{'via':>9}{'nssai':>12}" if show_slice else ""), file=out)
     for u in ues:
         print(f"0x{u['rnti']:04x}  {u['weight']:>8}{u['explicit']:>5}{u['cap']:>6}{u['granted_rbs']:>14}"
-              f"{u['mac_dl_rbs']:>12}{u['mac_dl_rbs_retx']:>10}{u['mac_dl_sdu_bytes']:>14}", file=out)
+              f"{u['mac_dl_rbs']:>12}{u['mac_dl_rbs_retx']:>10}{u['mac_dl_sdu_bytes']:>14}"
+              + (f"{u['slice']:>7}{u['source']:>9}{u['nssai']:>12}" if show_slice else ""), file=out)
 
 
 def parse_rnti(text):
@@ -133,6 +160,19 @@ def cmd_measure(seconds, **kw):
         share = 100.0 * rbs / total if total else 0.0
         print(f"0x{rnti:04x}  {rbs:>12}{share:>9.1f}{retx:>10}{byt:>12}{byt * 8 / seconds / 1e6:>9.2f}")
     agg = sum(r[3] for r in rows) * 8 / seconds / 1e6
+    if h1["slices"] and total:
+        # slice membership as read at the end of the window; a change during the window shows in the version line above
+        member = {u["rnti"]: u["slice"] for u in u1}
+        per = {}
+        for rnti, rbs, _retx, byt in rows:
+            acc = per.setdefault(member.get(rnti, 0), [0, 0, 0])
+            acc[0] += 1
+            acc[1] += rbs
+            acc[2] += byt
+        print(f"{'slice':<8}{'ues':>5}{'rbs':>12}{'share%':>9}{'Mbit/s':>9}")
+        for sid in sorted(per):
+            n, rbs, byt = per[sid]
+            print(f"{sid:<8}{n:>5}{rbs:>12}{100.0 * rbs / total:>9.1f}{byt * 8 / seconds / 1e6:>9.2f}")
     calls = int(h1["calls"]) - int(h0["calls"])
     if h1["version"] == h0["version"] and int(h1.get("ws_groups", 0)) > int(h0.get("ws_groups", 0)):
         d = {k: int(h1[k]) - int(h0[k]) for k in ("commit_fail", "multi_ue_slots", "ws_groups", "ws_free_rb", "ws_demand_rb", "ws_planned_rb", "ws_committed_rb")}
@@ -191,9 +231,12 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("ping")
     sub.add_parser("status")
-    p = sub.add_parser("policy"); p.add_argument("name", choices=["pf", "rr", "wrr", "wshare"])
+    p = sub.add_parser("policy"); p.add_argument("name", choices=["pf", "rr", "wrr", "wshare", "slice"])
     p = sub.add_parser("weight"); p.add_argument("rnti"); p.add_argument("value", type=int)
     p = sub.add_parser("cap"); p.add_argument("rnti"); p.add_argument("rbs", type=int)
+    p = sub.add_parser("slice"); p.add_argument("id", type=int); p.add_argument("field", choices=["weight", "cap"]); p.add_argument("value", type=int)
+    p = sub.add_parser("assoc"); p.add_argument("rnti"); p.add_argument("slice")
+    p = sub.add_parser("nssai-map"); p.add_argument("sst", type=int); p.add_argument("sd"); p.add_argument("slice")
     sub.add_parser("reset")
     p = sub.add_parser("measure"); p.add_argument("--seconds", type=float, default=10.0)
     p = sub.add_parser("map"); p.add_argument("--containers", required=True); p.add_argument("--target", default="192.168.72.135")
@@ -220,8 +263,40 @@ def main(argv=None):
             r = parse_rnti(a.rnti)
             h, u = set_and_verify(f"CAP {r:x} {a.rbs}", lambda h, u: any(x["rnti"] == r and x["cap"] == a.rbs for x in u), **kw)
             print_status(h, u)
+        elif a.cmd == "slice":
+            if not 0 <= a.id <= 7:
+                raise CtlError("slice must be 0..7")
+            key = a.field
+            h, u = set_and_verify(f"SLICE {a.id} {a.field.upper()} {a.value}",
+                                  lambda h, u: any(s_["id"] == a.id and s_[key] == a.value for s_ in h["slices"]), **kw)
+            print_status(h, u)
+        elif a.cmd == "assoc":
+            r = parse_rnti(a.rnti)
+            if a.slice == "-":
+                h, u = set_and_verify(f"ASSOC {r:x} -", lambda h, u: any(x["rnti"] == r and x["source"] != "rnti" for x in u), **kw)
+            else:
+                if not a.slice.isdigit() or not 0 <= int(a.slice) <= 7:
+                    raise CtlError("slice must be 0..7 or -")
+                sid = int(a.slice)
+                h, u = set_and_verify(f"ASSOC {r:x} {sid}",
+                                      lambda h, u: any(x["rnti"] == r and x["slice"] == sid and x["source"] == "rnti" for x in u), **kw)
+            print_status(h, u)
+        elif a.cmd == "nssai-map":
+            sd = 0xffffff if a.sd.lower() == "none" else parse_rnti(a.sd)  # hexadecimal, like an RNTI
+            if not 0 <= a.sst <= 255 or not 0 <= sd <= 0xffffff:
+                raise CtlError("sst must be 0..255 and sd up to ffffff (or none)")
+            has = lambda h, sid=None: any(r_["sst"] == a.sst and r_["sd"] == sd and (sid is None or r_["slice"] == sid) for r_ in h["rules"])
+            if a.slice == "-":
+                h, u = set_and_verify(f"NSSAIMAP {a.sst} {sd:06x} -", lambda h, u: not has(h), **kw)
+            else:
+                if not a.slice.isdigit() or not 0 <= int(a.slice) <= 7:
+                    raise CtlError("slice must be 0..7 or -")
+                sid = int(a.slice)
+                h, u = set_and_verify(f"NSSAIMAP {a.sst} {sd:06x} {sid}", lambda h, u: has(h, sid), **kw)
+            print_status(h, u)
         elif a.cmd == "reset":
-            h, u = set_and_verify("RESET", lambda h, u: h["policy"] == "pf" and not any(x["explicit"] or x["cap"] for x in u), **kw)
+            h, u = set_and_verify("RESET", lambda h, u: h["policy"] == "pf" and not any(x["explicit"] or x["cap"] for x in u)
+                                  and not h["slices"] and not h["rules"], **kw)
             print_status(h, u)
         elif a.cmd == "measure":
             cmd_measure(a.seconds, **kw)

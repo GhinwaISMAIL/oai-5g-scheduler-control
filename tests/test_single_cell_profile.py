@@ -162,7 +162,7 @@ def test_flexric_api_export_collects_control_interface_files(tmp_path):
     assert missing.returncode == 0 and not (tmp_path / 'b.tar.gz').exists()
 
 
-DEFAULT_GNB_IMAGE = 'ghinwa555/oai-gnb-ctrl:70508eba-c8747dfc6bc3'
+DEFAULT_GNB_IMAGE = 'ghinwa555/oai-gnb-ctrl:70508eba-f5d66d814b12'
 
 
 def test_default_gnb_image_matches_the_sources_in_this_checkout():

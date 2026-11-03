@@ -89,7 +89,51 @@ def test_client_policy_weight_cap_and_reset_are_read_back(server):
     assert r.returncode == 0 and "policy=pf" in r.stdout
 
 
-@pytest.mark.parametrize("args", [("weight", "1001", "0"), ("weight", "9999", "10"), ("cap", "1001", "3"), ("weight", "zz", "10")])
+def test_client_slice_commands_are_read_back(server):
+    assert client(server, "policy", "slice").returncode == 0
+    r = client(server, "slice", "1", "weight", "3000")
+    assert r.returncode == 0, r.stderr
+    assert any(line.split()[:3] == ["1", "3000", "0"] for line in r.stdout.splitlines() if (line.split() or [''])[0].isdigit())
+    r = client(server, "slice", "2", "cap", "30")
+    assert r.returncode == 0 and any(line.split()[:3] == ["2", "1000", "30"] for line in r.stdout.splitlines() if (line.split() or [''])[0].isdigit())
+    # the default value set explicitly is still read back
+    r = client(server, "slice", "3", "weight", "1000")
+    assert r.returncode == 0 and any(line.split()[:2] == ["3", "1000"] for line in r.stdout.splitlines() if (line.split() or [''])[0].isdigit())
+    r = client(server, "assoc", "1001", "1")
+    assert r.returncode == 0, r.stderr
+    row = [line for line in r.stdout.splitlines() if line.startswith("0x1001")][0].split()
+    assert row[-3:-1] == ["1", "rnti"]
+    r = client(server, "nssai-map", "2", "none", "3")
+    assert r.returncode == 0 and "rule: S-NSSAI sst=2 sd=none -> slice 3" in r.stdout
+    r = client(server, "nssai-map", "2", "123456", "4")
+    assert r.returncode == 0 and "sst=2 sd=123456 -> slice 4" in r.stdout
+    r = client(server, "nssai-map", "2", "123456", "-")
+    assert r.returncode == 0 and "sd=123456" not in r.stdout
+    r = client(server, "assoc", "1001", "-")
+    assert r.returncode == 0
+    row = [line for line in r.stdout.splitlines() if line.startswith("0x1001")][0].split()
+    assert row[-3:-1] == ["0", "default"]
+    r = client(server, "reset")
+    assert r.returncode == 0 and "policy=pf" in r.stdout and "rule:" not in r.stdout
+    assert not any((line.split() or [''])[0].isdigit() for line in r.stdout.splitlines())
+
+
+def test_client_measure_reports_slices(server):
+    assert client(server, "policy", "slice").returncode == 0
+    assert client(server, "assoc", "1001", "1").returncode == 0
+    assert client(server, "assoc", "1002", "2").returncode == 0
+    r = client(server, "measure", "--seconds", "0.2")
+    assert r.returncode == 0, r.stderr
+    rows = {line.split()[0]: line.split() for line in r.stdout.splitlines() if line[:1] in "12" and len(line.split()) == 5}
+    assert float(rows["1"][3]) == pytest.approx(75.0, abs=0.1)
+    assert float(rows["2"][3]) == pytest.approx(25.0, abs=0.1)
+
+
+@pytest.mark.parametrize("args", [("weight", "1001", "0"), ("weight", "9999", "10"), ("cap", "1001", "3"), ("weight", "zz", "10"),
+                                  ("slice", "9", "weight", "10"), ("slice", "1", "weight", "0"), ("slice", "1", "cap", "3"),
+                                  ("assoc", "9999", "1"), ("assoc", "1001", "8"), ("assoc", "1001", "x"),
+                                  ("nssai-map", "1", "none", "8"), ("nssai-map", "300", "none", "1"), ("nssai-map", "1", "zz", "1"),
+                                  ("nssai-map", "1", "none", "-")])
 def test_client_reports_rejections(server, args):
     r = client(server, *args)
     assert r.returncode == 1 and "ERROR" in r.stderr

@@ -625,36 +625,36 @@ static void test_e2(void)
   ctl("RESET", r, sizeof(r));
 
   /* the words the xApp builds, against values written out by hand */
-  CHECK(nr_ctrl_e2_pack("policy", "wshare", NULL, &hdr, &act, &err) == 0 && hdr == 0x53430001u && act == 2);
-  CHECK(nr_ctrl_e2_pack("policy", "wrr", NULL, &hdr, &act, &err) == 0 && act == 3);
-  CHECK(nr_ctrl_e2_pack("policy", "pf", NULL, &hdr, &act, &err) == 0 && act == 0);
-  CHECK(nr_ctrl_e2_pack("policy", "rr", NULL, &hdr, &act, &err) == 0 && act == 1);
-  CHECK(nr_ctrl_e2_pack("weight", "1001", "3000", &hdr, &act, &err) == 0 && hdr == 0x53430002u && act == 0x10010bb8u);
-  CHECK(nr_ctrl_e2_pack("weight", "*", "7", &hdr, &act, &err) == 0 && act == 7);
-  CHECK(nr_ctrl_e2_pack("cap", "1002", "20", &hdr, &act, &err) == 0 && hdr == 0x53430003u && act == 0x10020014u);
-  CHECK(nr_ctrl_e2_pack("reset", NULL, NULL, &hdr, &act, &err) == 0 && hdr == 0x53430004u && act == 0);
+  CHECK(nr_ctrl_e2_pack("policy", "wshare", NULL, NULL, &hdr, &act, &err) == 0 && hdr == 0x53430001u && act == 2);
+  CHECK(nr_ctrl_e2_pack("policy", "wrr", NULL, NULL, &hdr, &act, &err) == 0 && act == 3);
+  CHECK(nr_ctrl_e2_pack("policy", "pf", NULL, NULL, &hdr, &act, &err) == 0 && act == 0);
+  CHECK(nr_ctrl_e2_pack("policy", "rr", NULL, NULL, &hdr, &act, &err) == 0 && act == 1);
+  CHECK(nr_ctrl_e2_pack("weight", "1001", "3000", NULL, &hdr, &act, &err) == 0 && hdr == 0x53430002u && act == 0x10010bb8u);
+  CHECK(nr_ctrl_e2_pack("weight", "*", "7", NULL, &hdr, &act, &err) == 0 && act == 7);
+  CHECK(nr_ctrl_e2_pack("cap", "1002", "20", NULL, &hdr, &act, &err) == 0 && hdr == 0x53430003u && act == 0x10020014u);
+  CHECK(nr_ctrl_e2_pack("reset", NULL, NULL, NULL, &hdr, &act, &err) == 0 && hdr == 0x53430004u && act == 0);
 
   /* words the xApp refuses to build */
-  CHECK(nr_ctrl_e2_pack("policy", "bogus", NULL, &hdr, &act, &err) != 0);
-  CHECK(nr_ctrl_e2_pack("policy", NULL, NULL, &hdr, &act, &err) != 0);
-  CHECK(nr_ctrl_e2_pack("weight", "1001", "0", &hdr, &act, &err) != 0);
-  CHECK(nr_ctrl_e2_pack("weight", "1001", "65536", &hdr, &act, &err) != 0);
-  CHECK(nr_ctrl_e2_pack("weight", "0", "5", &hdr, &act, &err) != 0);
-  CHECK(nr_ctrl_e2_pack("weight", "10000", "5", &hdr, &act, &err) != 0);
-  CHECK(nr_ctrl_e2_pack("weight", "zz", "5", &hdr, &act, &err) != 0);
-  CHECK(nr_ctrl_e2_pack("weight", "1001", "5x", &hdr, &act, &err) != 0);
-  CHECK(nr_ctrl_e2_pack("cap", "1001", "3", &hdr, &act, &err) != 0);
-  CHECK(nr_ctrl_e2_pack("cap", "1001", "276", &hdr, &act, &err) != 0);
-  CHECK(nr_ctrl_e2_pack("cap", "*", "20", &hdr, &act, &err) != 0);
-  CHECK(nr_ctrl_e2_pack("nope", NULL, NULL, &hdr, &act, &err) != 0);
-  CHECK(nr_ctrl_e2_pack(NULL, NULL, NULL, &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("policy", "bogus", NULL, NULL, &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("policy", NULL, NULL, NULL, &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("weight", "1001", "0", NULL, &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("weight", "1001", "65536", NULL, &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("weight", "0", "5", NULL, &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("weight", "10000", "5", NULL, &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("weight", "zz", "5", NULL, &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("weight", "1001", "5x", NULL, &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("cap", "1001", "3", NULL, &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("cap", "1001", "276", NULL, &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("cap", "*", "20", NULL, &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("nope", NULL, NULL, NULL, &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack(NULL, NULL, NULL, NULL, &hdr, &act, &err) != 0);
 
   /* words the gNB refuses to translate (the stock example sends header 1, message 42) */
   char text[128];
   CHECK(nr_ctrl_e2_to_text(1, 42, text, sizeof(text)) != 0);
   CHECK(nr_ctrl_e2_to_text(0x53430000u, 0, text, sizeof(text)) != 0);
   CHECK(nr_ctrl_e2_to_text(0x53430005u, 0, text, sizeof(text)) != 0);
-  CHECK(nr_ctrl_e2_to_text(0x53430001u, 4, text, sizeof(text)) != 0);
+  CHECK(nr_ctrl_e2_to_text(0x53430001u, 5, text, sizeof(text)) != 0);
   CHECK(nr_ctrl_e2_to_text(0x53430002u, 0x10010000u, text, sizeof(text)) != 0); /* weight 0 */
   CHECK(nr_ctrl_e2_to_text(0x53430003u, 0x00000014u, text, sizeof(text)) != 0); /* cap without rnti */
   CHECK(nr_ctrl_e2_to_text(0x53430003u, 0x10010003u, text, sizeof(text)) != 0); /* cap 3 */
@@ -668,35 +668,35 @@ static void test_e2(void)
   CHECK(nr_ctrl_e2_to_text(0x53430003u, 0x00e30005u, text, sizeof(text)) == 0 && !strcmp(text, "CAP 00e3 5"));
 
   /* end to end against the live controller: xApp words -> gNB translation -> state */
-  CHECK(nr_ctrl_e2_pack("policy", "wshare", NULL, &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  CHECK(nr_ctrl_e2_pack("policy", "wshare", NULL, NULL, &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
   ctl("GET", g, sizeof(g));
   CHECK(strstr(g, "policy=wshare") != NULL);
 
-  CHECK(nr_ctrl_e2_pack("weight", "1001", "3000", &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
-  CHECK(nr_ctrl_e2_pack("weight", "1002", "1000", &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
-  CHECK(nr_ctrl_e2_pack("cap", "1002", "20", &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  CHECK(nr_ctrl_e2_pack("weight", "1001", "3000", NULL, &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  CHECK(nr_ctrl_e2_pack("weight", "1002", "1000", NULL, &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  CHECK(nr_ctrl_e2_pack("cap", "1002", "20", NULL, &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
   ctl("GET", g, sizeof(g));
   CHECK(ue_field(g, "0x1001", "weight=") == 3000 && ue_field(g, "0x1001", "cap=") == 0);
   CHECK(ue_field(g, "0x1002", "weight=") == 1000 && ue_field(g, "0x1002", "cap=") == 20);
 
-  CHECK(nr_ctrl_e2_pack("weight", "*", "250", &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  CHECK(nr_ctrl_e2_pack("weight", "*", "250", NULL, &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
   ctl("GET", g, sizeof(g));
   CHECK(get_field(g, "default_weight=") == 250);
 
-  CHECK(nr_ctrl_e2_pack("cap", "1002", "0", &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  CHECK(nr_ctrl_e2_pack("cap", "1002", "0", NULL, &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
   ctl("GET", g, sizeof(g));
   CHECK(ue_field(g, "0x1002", "cap=") == 0);
 
   /* the controller's own refusals reach the caller */
-  CHECK(nr_ctrl_e2_pack("weight", "7777", "5", &hdr, &act, &err) == 0); /* valid words, unknown UE */
+  CHECK(nr_ctrl_e2_pack("weight", "7777", "5", NULL, &hdr, &act, &err) == 0); /* valid words, unknown UE */
   CHECK(e2_deliver(hdr, act, r, sizeof(r)) != 0 && !strncmp(r, "ERR", 3));
   CHECK(e2_deliver(1, 42, r, sizeof(r)) == -2);
 
-  CHECK(nr_ctrl_e2_pack("policy", "wrr", NULL, &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  CHECK(nr_ctrl_e2_pack("policy", "wrr", NULL, NULL, &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
   ctl("GET", g, sizeof(g));
   CHECK(strstr(g, "policy=wrr") != NULL);
 
-  CHECK(nr_ctrl_e2_pack("reset", NULL, NULL, &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  CHECK(nr_ctrl_e2_pack("reset", NULL, NULL, NULL, &hdr, &act, &err) == 0 && e2_deliver(hdr, act, r, sizeof(r)) == 0);
   ctl("GET", g, sizeof(g));
   CHECK(strstr(g, "policy=pf") != NULL && get_field(g, "default_weight=") == NR_CTRL_DEFAULT_WEIGHT);
 
@@ -713,6 +713,367 @@ static void test_e2(void)
 }
 
 /* A second gNB object cannot be controlled; verify the single-instance guard. */
+/* ------------------------------------------------------------ slices */
+
+static nssai_t slice_nssai[40]; /* S-NSSAI the simulated MAC reports for each UE */
+
+/* `slots` saturated slots; UEs flagged in skip[] have no data (not offered to the policy).
+ * Adds the new-data resource blocks of each UE to got[]. */
+static void slice_run(int n_ue, const int *skip, int slots, double *got)
+{
+  for (int s = 0; s < slots; s++) {
+    sim_slot_prepare(n_ue, 1000000);
+    for (int i = 0; i < n_ue; i++) {
+      cands[i].nssai = slice_nssai[i];
+      if (skip && skip[i])
+        cands[i].skipped = true;
+    }
+    sim_slot(n_ue, 4);
+    for (int i = 0; i < n_ue; i++)
+      if (cands[i].scheduled && !cands[i].is_retx)
+        got[i] += cands[i].sched_pdsch.rbSize;
+  }
+}
+
+static long slice_field(const char *get, int id, const char *key)
+{
+  char pat[24];
+  snprintf(pat, sizeof(pat), "SLICE id=%d ", id);
+  const char *p = strstr(get, pat);
+  return p ? get_field(p, key) : -1;
+}
+
+/* 0 default, 1 rnti, 2 nssai of one UE's line; -1 when the UE is not listed */
+static int ue_source(const char *get, const char *rnti)
+{
+  char pat[32];
+  snprintf(pat, sizeof(pat), "rnti=%s ", rnti);
+  const char *p = strstr(get, pat);
+  if (!p)
+    return -1;
+  const char *eol = strchr(p, '\n');
+  const char *q = strstr(p, "source=");
+  if (!q || (eol && q > eol))
+    return -1;
+  return !strncmp(q + 7, "rnti", 4) ? 1 : (!strncmp(q + 7, "nssai", 5) ? 2 : 0);
+}
+
+static int count_of(const char *hay, const char *needle)
+{
+  int n = 0;
+  for (const char *p = hay; (p = strstr(p, needle)); p += strlen(needle))
+    n++;
+  return n;
+}
+
+static void slice_policy_on(void)
+{
+  char r[4096];
+  ctl("RESET", r, sizeof(r));
+  ctl("POLICY slice", r, sizeof(r));
+}
+
+static void test_slices(void)
+{
+  char r[4096], g[8192];
+  double got[40];
+
+  /* --- commands, limits and read-back */
+  sim_setup(4);
+  memset(slice_nssai, 0, sizeof(slice_nssai));
+  ctl("RESET", r, sizeof(r));
+  ctl("POLICY slice", r, sizeof(r));
+  CHECK(strstr(r, "OK") && strstr(r, "policy=slice"));
+  ctl("GET", g, sizeof(g));
+  long v0 = get_field(g, "version=");
+  const char *bad[] = {"SLICE 8 WEIGHT 1000", "SLICE 1 WEIGHT 0", "SLICE 1 WEIGHT 1000001", "SLICE 1 CAP 4", "SLICE 1 CAP 276",
+                       "SLICE 1 SHARE 5", "SLICE x WEIGHT 5", "SLICE 1 WEIGHT", "ASSOC 1001 8", "ASSOC 1001 x", "ASSOC 9999 1",
+                       "ASSOC zz 1", "ASSOC 1001", "NSSAIMAP 256 none 1", "NSSAIMAP 1 zz 1", "NSSAIMAP 1 1000000 1", "NSSAIMAP 1 none 8",
+                       "NSSAIMAP 1 none -", "NSSAIMAP 1 none", "POLICY slices"};
+  for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+    ctl(bad[i], r, sizeof(r));
+    CHECK(!strncmp(r, "ERR", 3));
+  }
+  ctl("GET", g, sizeof(g));
+  CHECK(get_field(g, "version=") == v0); /* a refused command changes nothing */
+  CHECK(!strstr(g, "SLICE id=") && !strstr(g, "RULE "));
+
+  const char *good[] = {"SLICE 1 WEIGHT 3000", "slice 2 weight 1000", "SLICE 2 CAP 30", "ASSOC 1001 1", "ASSOC 1002 1", "ASSOC 1003 2", "NSSAIMAP 2 none 3"};
+  for (size_t i = 0; i < sizeof(good) / sizeof(good[0]); i++) {
+    ctl(good[i], r, sizeof(r));
+    CHECK(!strncmp(r, "OK", 2));
+  }
+  ctl("GET", g, sizeof(g));
+  CHECK(get_field(g, "version=") == v0 + 7);
+  CHECK(slice_field(g, 1, "weight=") == 3000 && slice_field(g, 1, "ues=") == 2);
+  CHECK(slice_field(g, 2, "weight=") == 1000 && slice_field(g, 2, "cap=") == 30 && slice_field(g, 2, "ues=") == 1);
+  CHECK(slice_field(g, 0, "ues=") == 1); /* UE 0x1004 */
+  CHECK(strstr(g, "RULE sst=2 sd=ffffff slice=3"));
+  CHECK(ue_field(g, "0x1001", "slice=") == 1 && ue_source(g, "0x1001") == 1);
+  CHECK(ue_field(g, "0x1004", "slice=") == 0 && ue_source(g, "0x1004") == 0);
+  /* the same rule is replaced, not duplicated; a specific sd is another rule */
+  ctl("NSSAIMAP 2 none 4", r, sizeof(r));
+  ctl("NSSAIMAP 2 123456 5", r, sizeof(r));
+  ctl("GET", g, sizeof(g));
+  CHECK(count_of(g, "RULE ") == 2 && strstr(g, "RULE sst=2 sd=ffffff slice=4") && strstr(g, "RULE sst=2 sd=123456 slice=5"));
+  ctl("NSSAIMAP 2 123456 -", r, sizeof(r));
+  CHECK(!strncmp(r, "OK", 2));
+  ctl("GET", g, sizeof(g));
+  CHECK(count_of(g, "RULE ") == 1);
+  for (int i = 10; i < 17; i++) {
+    char c[48];
+    snprintf(c, sizeof(c), "NSSAIMAP %d none 1", i);
+    ctl(c, r, sizeof(r));
+    CHECK(!strncmp(r, "OK", 2));
+  }
+  ctl("NSSAIMAP 99 none 1", r, sizeof(r));
+  CHECK(!strncmp(r, "ERR", 3)); /* table of 8 rules is full */
+  ctl("RESET", r, sizeof(r));
+  ctl("GET", g, sizeof(g));
+  CHECK(!strstr(g, "SLICE id=") && !strstr(g, "RULE ") && strstr(g, "policy=pf"));
+
+  /* --- slice shares follow the slice weights, 2 + 2 UEs */
+  slice_policy_on();
+  ctl("SLICE 1 WEIGHT 3000", r, sizeof(r));
+  ctl("SLICE 2 WEIGHT 1000", r, sizeof(r));
+  ctl("ASSOC 1001 1", r, sizeof(r));
+  ctl("ASSOC 1002 1", r, sizeof(r));
+  ctl("ASSOC 1003 2", r, sizeof(r));
+  ctl("ASSOC 1004 2", r, sizeof(r));
+  memset(got, 0, sizeof(got));
+  slice_run(4, NULL, 4000, got);
+  double tot = got[0] + got[1] + got[2] + got[3];
+  CHECK(tot == 4000.0 * NSLOT_RB);
+  CHECK(fabs((got[0] + got[1]) / tot - 0.75) < 0.01);
+  CHECK(fabs(got[0] - got[1]) / (got[0] + got[1]) < 0.02 && fabs(got[2] - got[3]) / (got[2] + got[3]) < 0.02);
+  ctl("GET", g, sizeof(g));
+  CHECK(slice_field(g, 1, "granted_rbs=") == (long)(got[0] + got[1]) && slice_field(g, 2, "granted_rbs=") == (long)(got[2] + got[3]));
+
+  /* --- the slice share does not depend on the number of UEs in the slice (3 + 1) ... */
+  slice_policy_on();
+  ctl("SLICE 1 WEIGHT 3000", r, sizeof(r));
+  ctl("SLICE 2 WEIGHT 1000", r, sizeof(r));
+  ctl("ASSOC 1001 1", r, sizeof(r));
+  ctl("ASSOC 1002 1", r, sizeof(r));
+  ctl("ASSOC 1003 1", r, sizeof(r));
+  ctl("ASSOC 1004 2", r, sizeof(r));
+  memset(got, 0, sizeof(got));
+  slice_run(4, NULL, 4000, got);
+  tot = got[0] + got[1] + got[2] + got[3];
+  CHECK(fabs((got[0] + got[1] + got[2]) / tot - 0.75) < 0.01);
+  CHECK(fabs(got[3] / tot - 0.25) < 0.01);
+  /* ... nor on how many of them have data: two of the three stop */
+  int skip[4] = {0, 1, 1, 0};
+  memset(got, 0, sizeof(got));
+  slice_run(4, skip, 3000, got);
+  tot = got[0] + got[3];
+  CHECK(got[1] == 0.0 && got[2] == 0.0);
+  CHECK(fabs(got[0] / tot - 0.75) < 0.01);
+
+  /* --- inside a slice the UE weights decide */
+  slice_policy_on();
+  ctl("ASSOC 1001 1", r, sizeof(r));
+  ctl("ASSOC 1002 1", r, sizeof(r));
+  ctl("ASSOC 1003 2", r, sizeof(r));
+  ctl("ASSOC 1004 2", r, sizeof(r));
+  ctl("WEIGHT 1001 3000", r, sizeof(r));
+  ctl("WEIGHT 1002 1000", r, sizeof(r));
+  memset(got, 0, sizeof(got));
+  slice_run(4, NULL, 4000, got);
+  tot = got[0] + got[1] + got[2] + got[3];
+  CHECK(fabs((got[0] + got[1]) / tot - 0.5) < 0.01);
+  CHECK(fabs(got[0] / got[1] - 3.0) < 0.1);
+  CHECK(fabs(got[2] / got[3] - 1.0) < 0.05);
+
+  /* --- one UE per slot, as in wrr, and retransmissions are served first and not charged */
+  sim_setup(2);
+  slice_policy_on();
+  sim_slot_prepare(2, 1000000);
+  cands[0].is_retx = true;
+  cands[0].retx_rbSize = 10;
+  cands[0].pending_bytes = 0;
+  CHECK(sim_slot(2, 4) == 2);
+  CHECK(cands[0].sched_pdsch.rbStart == 0 && cands[0].sched_pdsch.rbSize == 10);
+  CHECK(cands[1].sched_pdsch.rbSize == NSLOT_RB - 10);
+  ctl("GET", g, sizeof(g));
+  CHECK(slice_field(g, 0, "granted_rbs=") == NSLOT_RB - 10); /* only the new data is charged */
+
+  /* --- a slice that was idle does not take every slot when it comes back */
+  slice_policy_on();
+  ctl("ASSOC 1001 1", r, sizeof(r));
+  ctl("ASSOC 1002 2", r, sizeof(r));
+  int idle2[2] = {0, 1};
+  memset(got, 0, sizeof(got));
+  slice_run(2, idle2, 3000, got);
+  CHECK(got[0] == 3000.0 * NSLOT_RB && got[1] == 0.0);
+  memset(got, 0, sizeof(got));
+  slice_run(2, NULL, 300, got);
+  CHECK(fabs(got[1] / (got[0] + got[1]) - 0.5) < 0.05);
+  memset(got, 0, sizeof(got));
+  slice_run(2, NULL, 2000, got);
+  CHECK(fabs(got[1] / (got[0] + got[1]) - 0.5) < 0.01);
+  /* a gap shorter than the idle period keeps the slice's accumulated deficit: it is served first on return */
+  slice_policy_on();
+  ctl("ASSOC 1001 1", r, sizeof(r));
+  ctl("ASSOC 1002 2", r, sizeof(r));
+  memset(got, 0, sizeof(got));
+  slice_run(2, NULL, 200, got);
+  memset(got, 0, sizeof(got));
+  slice_run(2, idle2, 100, got);
+  CHECK(got[0] == 100.0 * NSLOT_RB);
+  memset(got, 0, sizeof(got));
+  slice_run(2, NULL, 200, got);
+  CHECK(got[1] > got[0]); /* it catches up what it missed */
+
+  /* --- caps: the smaller of the UE cap and the slice cap */
+  slice_policy_on();
+  ctl("ASSOC 1001 1", r, sizeof(r));
+  ctl("ASSOC 1002 2", r, sizeof(r));
+  ctl("SLICE 1 CAP 30", r, sizeof(r));
+  sim_slot_prepare(2, 1000000);
+  CHECK(sim_slot(2, 4) == 2);
+  CHECK(cands[0].sched_pdsch.rbSize == 30 && cands[1].sched_pdsch.rbSize == NSLOT_RB - 30);
+  ctl("CAP 1001 20", r, sizeof(r));
+  sim_slot_prepare(2, 1000000);
+  sim_slot(2, 4);
+  CHECK(cands[0].sched_pdsch.rbSize == 20);
+  ctl("CAP 1001 40", r, sizeof(r));
+  sim_slot_prepare(2, 1000000);
+  sim_slot(2, 4);
+  CHECK(cands[0].sched_pdsch.rbSize == 30);
+  CHECK(nr_ctrl_cap_min(0, 0) == 0 && nr_ctrl_cap_min(0, 7) == 7 && nr_ctrl_cap_min(7, 0) == 7 && nr_ctrl_cap_min(9, 7) == 7);
+
+  /* --- membership: RNTI association, then S-NSSAI rule, then slice 0 */
+  sim_setup(3);
+  memset(slice_nssai, 0, sizeof(slice_nssai));
+  slice_nssai[2] = (nssai_t){.sst = 2, .sd = 0xFFFFFF};
+  slice_policy_on();
+  memset(got, 0, sizeof(got));
+  slice_run(3, NULL, 1, got); /* lets the policy see the S-NSSAI of the candidates */
+  ctl("GET", g, sizeof(g));
+  CHECK(ue_field(g, "0x1003", "slice=") == 0 && ue_source(g, "0x1003") == 0);
+  CHECK(strstr(g, "nssai=2:ffffff"));
+  ctl("NSSAIMAP 2 none 3", r, sizeof(r));
+  ctl("GET", g, sizeof(g));
+  CHECK(ue_field(g, "0x1003", "slice=") == 3 && ue_source(g, "0x1003") == 2);
+  CHECK(ue_field(g, "0x1001", "slice=") == 0 && ue_source(g, "0x1001") == 0);
+  ctl("ASSOC 1003 5", r, sizeof(r));
+  ctl("GET", g, sizeof(g));
+  CHECK(ue_field(g, "0x1003", "slice=") == 5 && ue_source(g, "0x1003") == 1);
+  ctl("ASSOC 1003 -", r, sizeof(r));
+  ctl("GET", g, sizeof(g));
+  CHECK(ue_field(g, "0x1003", "slice=") == 3 && ue_source(g, "0x1003") == 2);
+  ctl("NSSAIMAP 2 123456 4", r, sizeof(r)); /* another sd: no match */
+  ctl("NSSAIMAP 2 none -", r, sizeof(r));
+  ctl("GET", g, sizeof(g));
+  CHECK(ue_field(g, "0x1003", "slice=") == 0 && ue_source(g, "0x1003") == 0);
+  /* the rule decides the scheduling too: the NSSAI slice is served by its weight */
+  ctl("NSSAIMAP 2 none 3", r, sizeof(r));
+  ctl("SLICE 3 WEIGHT 3000", r, sizeof(r));
+  memset(got, 0, sizeof(got));
+  slice_run(3, NULL, 4000, got);
+  tot = got[0] + got[1] + got[2];
+  CHECK(fabs(got[2] / tot - 0.75) < 0.01); /* slice 3 (3000) against slice 0 (1000, two UEs): 3000 / 4000 */
+
+  /* --- a UE that leaves loses its association, the rules stay */
+  sim_setup(3);
+  slice_policy_on();
+  ctl("ASSOC 1003 4", r, sizeof(r));
+  ctl("NSSAIMAP 7 none 1", r, sizeof(r));
+  sim_setup(2);
+  memset(got, 0, sizeof(got));
+  slice_run(2, NULL, 600, got); /* the table is pruned every 256 calls */
+  ctl("GET", g, sizeof(g));
+  CHECK(!strstr(g, "rnti=0x1003 ") && strstr(g, "RULE sst=7 sd=ffffff slice=1"));
+  sim_setup(3);
+  ctl("GET", g, sizeof(g));
+  CHECK(ue_field(g, "0x1003", "slice=") == 0 && ue_source(g, "0x1003") == 0);
+  sim_setup(2);
+}
+
+/* The slice commands in the two words of the E2 control message. */
+static void test_slices_e2(void)
+{
+  char r[4096], g[8192], text[128];
+  uint32_t hdr, act;
+  const char *err = NULL;
+
+  /* words built by the xApp, against values written out by hand */
+  CHECK(nr_ctrl_e2_pack("policy", "slice", NULL, NULL, &hdr, &act, &err) == 0 && hdr == 0x53430001u && act == 4);
+  CHECK(nr_ctrl_e2_pack("slice-weight", "3", "3000", NULL, &hdr, &act, &err) == 0 && hdr == 0x53430305u && act == 3000);
+  CHECK(nr_ctrl_e2_pack("slice-cap", "2", "30", NULL, &hdr, &act, &err) == 0 && hdr == 0x53430206u && act == 30);
+  CHECK(nr_ctrl_e2_pack("slice-cap", "2", "0", NULL, &hdr, &act, &err) == 0 && hdr == 0x53430206u && act == 0);
+  CHECK(nr_ctrl_e2_pack("assoc", "1001", "1", NULL, &hdr, &act, &err) == 0 && hdr == 0x53430107u && act == 0x10010000u);
+  CHECK(nr_ctrl_e2_pack("assoc", "1001", "none", NULL, &hdr, &act, &err) == 0 && hdr == 0x5343ff07u && act == 0x10010000u);
+  CHECK(nr_ctrl_e2_pack("nssai-map", "2", "none", "3", &hdr, &act, &err) == 0 && hdr == 0x53430308u && act == 0x02ffffffu);
+  CHECK(nr_ctrl_e2_pack("nssai-map", "1", "abcdef", "none", &hdr, &act, &err) == 0 && hdr == 0x5343ff08u && act == 0x01abcdefu);
+  CHECK(nr_ctrl_e2_pack("nssai-map", "255", "0", "7", &hdr, &act, &err) == 0 && hdr == 0x53430708u && act == 0xff000000u);
+
+  /* words the xApp refuses to build */
+  const char *bad[][4] = {{"slice-weight", "8", "5", NULL}, {"slice-weight", "1", "0", NULL}, {"slice-weight", "1", "65536", NULL},
+                          {"slice-weight", "x", "5", NULL}, {"slice-weight", NULL, NULL, NULL}, {"slice-cap", "1", "4", NULL},
+                          {"slice-cap", "1", "276", NULL}, {"slice-cap", "9", "30", NULL}, {"assoc", "1001", "8", NULL},
+                          {"assoc", "0", "1", NULL}, {"assoc", "1001", "x", NULL}, {"assoc", "1001", NULL, NULL},
+                          {"nssai-map", "256", "none", "1"}, {"nssai-map", "1", "1000000", "1"}, {"nssai-map", "1", "zz", "1"},
+                          {"nssai-map", "1", "none", "9"}, {"nssai-map", "1", "none", NULL}, {"nssai-map", NULL, NULL, NULL}};
+  for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++)
+    CHECK(nr_ctrl_e2_pack(bad[i][0], bad[i][1], bad[i][2], bad[i][3], &hdr, &act, &err) != 0);
+
+  /* the text for each word pair, and the pairs the gNB refuses */
+  CHECK(nr_ctrl_e2_to_text(0x53430001u, 4, text, sizeof(text)) == 0 && !strcmp(text, "POLICY slice"));
+  CHECK(nr_ctrl_e2_to_text(0x53430305u, 3000, text, sizeof(text)) == 0 && !strcmp(text, "SLICE 3 WEIGHT 3000"));
+  CHECK(nr_ctrl_e2_to_text(0x53430206u, 30, text, sizeof(text)) == 0 && !strcmp(text, "SLICE 2 CAP 30"));
+  CHECK(nr_ctrl_e2_to_text(0x53430107u, 0x10010000u, text, sizeof(text)) == 0 && !strcmp(text, "ASSOC 1001 1"));
+  CHECK(nr_ctrl_e2_to_text(0x5343ff07u, 0x10010000u, text, sizeof(text)) == 0 && !strcmp(text, "ASSOC 1001 -"));
+  CHECK(nr_ctrl_e2_to_text(0x53430308u, 0x02ffffffu, text, sizeof(text)) == 0 && !strcmp(text, "NSSAIMAP 2 ffffff 3"));
+  CHECK(nr_ctrl_e2_to_text(0x5343ff08u, 0x01abcdefu, text, sizeof(text)) == 0 && !strcmp(text, "NSSAIMAP 1 abcdef -"));
+  CHECK(nr_ctrl_e2_to_text(0x53430101u, 1, text, sizeof(text)) != 0);        /* old opcode with an argument */
+  CHECK(nr_ctrl_e2_to_text(0x53430102u, 0x10010bb8u, text, sizeof(text)) != 0);
+  CHECK(nr_ctrl_e2_to_text(0x53430103u, 0x10010014u, text, sizeof(text)) != 0);
+  CHECK(nr_ctrl_e2_to_text(0x53430104u, 0, text, sizeof(text)) != 0);
+  CHECK(nr_ctrl_e2_to_text(0x53430009u, 0, text, sizeof(text)) != 0);        /* unknown opcode */
+  CHECK(nr_ctrl_e2_to_text(0x53430805u, 5, text, sizeof(text)) != 0);        /* slice 8 */
+  CHECK(nr_ctrl_e2_to_text(0x53430005u, 0, text, sizeof(text)) != 0);        /* weight 0 */
+  CHECK(nr_ctrl_e2_to_text(0x53430105u, 0x10000u, text, sizeof(text)) != 0); /* weight above 65535 */
+  CHECK(nr_ctrl_e2_to_text(0x53430106u, 4, text, sizeof(text)) != 0);        /* cap 4 */
+  CHECK(nr_ctrl_e2_to_text(0x53430107u, 0, text, sizeof(text)) != 0);        /* no rnti */
+  CHECK(nr_ctrl_e2_to_text(0x53430107u, 0x10010001u, text, sizeof(text)) != 0);
+  CHECK(nr_ctrl_e2_to_text(0x53430a08u, 0, text, sizeof(text)) != 0);        /* slice 10 */
+  CHECK(nr_ctrl_e2_to_text(0x53430107u, 0x10010000u, text, 6) != 0);         /* buffer too small */
+
+  /* end to end against the live controller */
+  sim_setup(2);
+  memset(slice_nssai, 0, sizeof(slice_nssai));
+  ctl("RESET", r, sizeof(r));
+  nr_ctrl_e2_pack("policy", "slice", NULL, NULL, &hdr, &act, &err);
+  CHECK(e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  nr_ctrl_e2_pack("slice-weight", "1", "3000", NULL, &hdr, &act, &err);
+  CHECK(e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  nr_ctrl_e2_pack("slice-cap", "1", "30", NULL, &hdr, &act, &err);
+  CHECK(e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  nr_ctrl_e2_pack("assoc", "1001", "1", NULL, &hdr, &act, &err);
+  CHECK(e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  nr_ctrl_e2_pack("nssai-map", "2", "none", "3", &hdr, &act, &err);
+  CHECK(e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  ctl("GET", g, sizeof(g));
+  CHECK(strstr(g, "policy=slice"));
+  CHECK(slice_field(g, 1, "weight=") == 3000 && slice_field(g, 1, "cap=") == 30);
+  CHECK(ue_field(g, "0x1001", "slice=") == 1 && ue_source(g, "0x1001") == 1);
+  CHECK(strstr(g, "RULE sst=2 sd=ffffff slice=3"));
+  nr_ctrl_e2_pack("assoc", "1001", "none", NULL, &hdr, &act, &err);
+  CHECK(e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  nr_ctrl_e2_pack("nssai-map", "2", "none", "none", &hdr, &act, &err);
+  CHECK(e2_deliver(hdr, act, r, sizeof(r)) == 0);
+  ctl("GET", g, sizeof(g));
+  CHECK(ue_source(g, "0x1001") == 0 && !strstr(g, "RULE "));
+  /* the controller's refusals reach the caller */
+  nr_ctrl_e2_pack("assoc", "7777", "1", NULL, &hdr, &act, &err);
+  CHECK(e2_deliver(hdr, act, r, sizeof(r)) != 0 && !strncmp(r, "ERR", 3));
+  nr_ctrl_e2_pack("nssai-map", "9", "none", "none", &hdr, &act, &err);
+  CHECK(e2_deliver(hdr, act, r, sizeof(r)) != 0 && !strncmp(r, "ERR", 3)); /* no such rule */
+  ctl("RESET", r, sizeof(r));
+}
+
 static void test_second_instance(void)
 {
   gNB_MAC_INST other;
@@ -753,9 +1114,10 @@ static void *hammer(void *arg)
 {
   (void)arg;
   char r[4096];
-  const char *cmds[] = {"POLICY wshare", "POLICY rr", "POLICY pf", "WEIGHT 1001 5000", "WEIGHT 1002 700", "CAP 1001 30", "CAP 1001 0", "GET", "RESET"};
+  const char *cmds[] = {"POLICY wshare", "POLICY rr", "POLICY pf", "WEIGHT 1001 5000", "WEIGHT 1002 700", "CAP 1001 30", "CAP 1001 0", "GET", "RESET",
+                        "POLICY slice", "SLICE 1 WEIGHT 3000", "SLICE 2 CAP 30", "ASSOC 1001 1", "ASSOC 1002 -", "NSSAIMAP 1 none 2", "NSSAIMAP 1 none -"};
   for (int i = 0; i < 3000; i++)
-    ctl(cmds[i % 9], r, sizeof(r));
+    ctl(cmds[i % (int)(sizeof(cmds) / sizeof(cmds[0]))], r, sizeof(r));
   return NULL;
 }
 
@@ -781,6 +1143,8 @@ int main(void)
   test_policy();
   test_budget();
   test_e2();
+  test_slices();
+  test_slices_e2();
   test_second_instance();
   test_many_ues();
   test_concurrency();

@@ -19,7 +19,9 @@
     "e2_scheduler_control_validated_on_live_gnb": true,
     "new_repository_deployment_validated": false,
     "local_dl_prb_policy_control_implemented": true,
-    "local_dl_prb_policy_control_validated_on_live_gnb": true
+    "local_dl_prb_policy_control_validated_on_live_gnb": true,
+    "slice_scheduling_implemented": true,
+    "slice_scheduling_validated_on_live_gnb": false
   },
   "control_source_blobs": {
     "ran_func_mac.c": "4a37130533601f5bb04939fa4be9e25b566a406f",

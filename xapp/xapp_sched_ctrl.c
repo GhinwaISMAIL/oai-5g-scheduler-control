@@ -1,10 +1,14 @@
 /*
- * xApp that sets the downlink scheduler policy and per-UE weights and caps of the
- * gNB through the MAC service model's control message.
+ * xApp that sets the downlink scheduler policy, the per-UE weights and caps and the
+ * slices of the gNB through the MAC service model's control message.
  *
- *   xapp_sched_ctrl policy <pf|rr|wrr|wshare>
+ *   xapp_sched_ctrl policy <pf|rr|wrr|wshare|slice>
  *   xapp_sched_ctrl weight <rnti|*> <1..65535>     rnti in hexadecimal, * = default weight
  *   xapp_sched_ctrl cap <rnti> <0|5..275>          resource blocks per slot, 0 = no cap
+ *   xapp_sched_ctrl slice-weight <0..7> <1..65535>
+ *   xapp_sched_ctrl slice-cap <0..7> <0|5..275>
+ *   xapp_sched_ctrl assoc <rnti> <0..7|none>       slice of a UE, none removes the association
+ *   xapp_sched_ctrl nssai-map <sst> <sd|none> <0..7|none>   slice for UEs with that S-NSSAI (sd in hex)
  *   xapp_sched_ctrl reset
  *
  * The command is sent to every connected gNB that registered the MAC service
@@ -30,19 +34,24 @@
 static void usage(const char *prog)
 {
   fprintf(stderr,
-          "usage: %s policy <pf|rr|wrr|wshare>\n"
+          "usage: %s policy <pf|rr|wrr|wshare|slice>\n"
           "       %s weight <rnti|*> <1..65535>\n"
           "       %s cap <rnti> <0|5..275>\n"
+          "       %s slice-weight <0..7> <1..65535>\n"
+          "       %s slice-cap <0..7> <0|5..275>\n"
+          "       %s assoc <rnti> <0..7|none>\n"
+          "       %s nssai-map <sst> <sd|none> <0..7|none>\n"
           "       %s reset\n",
-          prog, prog, prog, prog);
+          prog, prog, prog, prog, prog, prog, prog, prog);
 }
 
 int main(int argc, char *argv[])
 {
   uint32_t hdr = 0, act = 0;
   const char *err = NULL;
-  if (argc < 2 || nr_ctrl_e2_pack(argv[1], argc > 2 ? argv[2] : NULL, argc > 3 ? argv[3] : NULL, &hdr, &act, &err) != 0) {
-    if (argc >= 2)
+  if (argc < 2 || argc > 5
+      || nr_ctrl_e2_pack(argv[1], argc > 2 ? argv[2] : NULL, argc > 3 ? argv[3] : NULL, argc > 4 ? argv[4] : NULL, &hdr, &act, &err) != 0) {
+    if (argc >= 2 && argc <= 5)
       fprintf(stderr, "error: %s\n", err);
     usage(argv[0]);
     return 2;

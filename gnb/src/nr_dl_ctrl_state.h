@@ -7,9 +7,13 @@
  * Commands (one per datagram, case-insensitive keywords, RNTI in hex):
  *   PING
  *   GET
- *   POLICY pf|rr|wrr|wshare
+ *   POLICY pf|rr|wrr|wshare|slice
  *   WEIGHT <rnti|*> <1..1000000>      relative downlink share (wshare)
  *   CAP <rnti> <0|5..275>             most resource blocks per slot, 0 = none
+ *   SLICE <id> WEIGHT <1..1000000>    relative share of a slice (policy slice)
+ *   SLICE <id> CAP <0|5..275>         most resource blocks per grant to a UE of the slice
+ *   ASSOC <rnti> <id|->               puts a UE in a slice (id 0..7), '-' removes the association
+ *   NSSAIMAP <sst> <sd|none> <id|->   slice for UEs with that S-NSSAI (sd in hex), '-' deletes the rule
  *   RESET                             stock proportional-fair, state cleared
  * Replies start with "OK" or "ERR <reason>".
  */
@@ -27,9 +31,17 @@
 #define NR_CTRL_DEFAULT_WEIGHT 1000
 #define NR_CTRL_WS_SHARE_INIT 500 /* start: share the slot in half of the slots */
 #define NR_CTRL_WS_SHARE_MIN 20   /* never stop probing: 2 % of the slots */
+#define NR_CTRL_MAX_SLICE 8
+#define NR_CTRL_MAX_RULE 8
+#define NR_CTRL_NO_SD 0xFFFFFFu /* S-NSSAI without a slice differentiator */
+/* A slice with no backlogged UE for this many scheduler calls counts as idle. */
+#define NR_CTRL_SLICE_IDLE_CALLS 500
 #define NR_CTRL_SLOTS 40 /* slot indices tracked (80 slots per frame at most 40 are kept) */
 
-enum { NR_CTRL_POLICY_PF = 0, NR_CTRL_POLICY_RR = 1, NR_CTRL_POLICY_WSHARE = 2, NR_CTRL_POLICY_WRR = 3 };
+enum { NR_CTRL_POLICY_PF = 0, NR_CTRL_POLICY_RR = 1, NR_CTRL_POLICY_WSHARE = 2, NR_CTRL_POLICY_WRR = 3, NR_CTRL_POLICY_SLICE = 4 };
+
+/* where the slice of a UE comes from */
+enum { NR_CTRL_SRC_DEFAULT = 0, NR_CTRL_SRC_RNTI = 1, NR_CTRL_SRC_NSSAI = 2 };
 
 typedef struct {
   uint16_t rnti;
@@ -38,7 +50,27 @@ typedef struct {
   uint64_t granted_rbs;
   uint64_t granted_slots;
   uint64_t commit_fail; /* grants planned for this UE that the MAC refused */
+  uint8_t assoc;        /* 1: explicitly associated with `slice` */
+  uint8_t slice;
+  uint8_t nssai_known;  /* the S-NSSAI below was seen on a scheduler candidate */
+  uint8_t sst;
+  uint32_t sd;
 } nr_ctrl_ue_t;
+
+typedef struct {
+  uint32_t weight;
+  int cap;
+  uint64_t granted_rbs;
+  uint64_t granted_slots;
+  uint32_t idle_calls; /* consecutive scheduler calls without a backlogged UE in the slice */
+  uint8_t configured;  /* a SLICE command set its weight or cap (even to the default value) */
+} nr_ctrl_slice_t;
+
+typedef struct {
+  uint8_t sst;
+  uint32_t sd;
+  uint8_t slice;
+} nr_ctrl_rule_t;
 
 typedef struct {
   int policy;
@@ -65,6 +97,9 @@ typedef struct {
   uint64_t ws_lost_slots;   /* wshare: slots where every grant was refused */
   int n_ue;
   nr_ctrl_ue_t ue[NR_CTRL_MAX_UE];
+  nr_ctrl_slice_t slice[NR_CTRL_MAX_SLICE];
+  int n_rule;
+  nr_ctrl_rule_t rule[NR_CTRL_MAX_RULE];
 } nr_ctrl_state_t;
 
 /* Snapshot of a connected UE taken by the caller under the scheduler lock. */
@@ -82,6 +117,21 @@ int nr_ctrl_cap_of(const nr_ctrl_state_t *st, uint16_t rnti);
 /* granted_rbs / weight, the quantity the policy equalises */
 double nr_ctrl_deficit(const nr_ctrl_state_t *st, uint16_t rnti);
 void nr_ctrl_account(nr_ctrl_state_t *st, uint16_t rnti, int rbs);
+
+/* Slices.  The caller records the S-NSSAI of every scheduler candidate first. */
+void nr_ctrl_note_nssai(nr_ctrl_state_t *st, uint16_t rnti, uint8_t sst, uint32_t sd);
+/* Slice id of the UE (0..7) and, in *source, why: NR_CTRL_SRC_*. */
+int nr_ctrl_slice_of(const nr_ctrl_state_t *st, uint16_t rnti, int *source);
+/* granted_rbs / weight of the slice, the quantity the slice policy equalises */
+double nr_ctrl_slice_deficit(const nr_ctrl_state_t *st, int slice);
+int nr_ctrl_slice_cap(const nr_ctrl_state_t *st, int slice);
+void nr_ctrl_account_slice(nr_ctrl_state_t *st, int slice, int rbs);
+/* Smaller non-zero of two caps (0 = no cap). */
+int nr_ctrl_cap_min(int a, int b);
+/* Called once per scheduler call with the slices that have a UE with new data.  A slice that comes
+ * back after NR_CTRL_SLICE_IDLE_CALLS calls without one has its counter raised to the lowest deficit
+ * of the slices that were already backlogged, so it cannot take every slot until it has caught up. */
+void nr_ctrl_slice_activity(nr_ctrl_state_t *st, const uint8_t backlogged[NR_CTRL_MAX_SLICE]);
 void nr_ctrl_note_commit_fail(nr_ctrl_state_t *st, uint16_t rnti, int slot, int cce);
 /* Drop entries of UEs that are no longer connected. */
 void nr_ctrl_prune(nr_ctrl_state_t *st, const nr_ctrl_ue_view_t *ues, int n_ues);

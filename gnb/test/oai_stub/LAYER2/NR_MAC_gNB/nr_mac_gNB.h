@@ -93,6 +93,11 @@ typedef struct {
 
 struct gNB_MAC_INST_s;
 typedef struct gNB_MAC_INST_s gNB_MAC_INST;
+/* common/5g_platform_types.h */
+typedef struct nssai_s {
+  uint8_t sst;
+  uint32_t sd;
+} nssai_t;
 typedef struct nr_dl_candidate nr_dl_candidate_t;
 typedef struct nr_dl_sched_params nr_dl_sched_params_t;
 struct nr_dl_sched_params {
@@ -112,6 +117,7 @@ struct nr_dl_candidate {
   int8_t retx_harq_pid;
   int retx_rbSize;
   uint32_t pending_bytes;
+  nssai_t nssai;
   int mcs_table;
   int bwp_start;
   int bwp_size;

@@ -32,7 +32,7 @@ PATCH_MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PATCH_MODULE)
 
 MAGIC = 0x5343
-POLICIES = {"pf": 0, "rr": 1, "wshare": 2, "wrr": 3}
+POLICIES = {"pf": 0, "rr": 1, "wshare": 2, "wrr": 3, "slice": 4}
 
 # Stand-ins that have the shape of the FlexRIC declarations the xApp uses.
 STAND_IN_API = r"""
@@ -93,8 +93,21 @@ STAND_IN_DEFER = r"""
 """
 
 
-def encode(verb: str, a1: str = "", a2: str = "") -> tuple[int, int]:
+def encode(verb: str, a1: str = "", a2: str = "", a3: str = "") -> tuple[int, int]:
     """The documented encoding, written from the specification in nr_dl_ctrl_e2.h."""
+
+    def slice_arg(text: str) -> int:
+        return 0xFF if text == "none" else int(text)
+
+    if verb == "slice-weight":
+        return (MAGIC << 16) | (int(a1) << 8) | 5, int(a2)
+    if verb == "slice-cap":
+        return (MAGIC << 16) | (int(a1) << 8) | 6, int(a2)
+    if verb == "assoc":
+        return (MAGIC << 16) | (slice_arg(a2) << 8) | 7, int(a1, 16) << 16
+    if verb == "nssai-map":
+        sd = 0xFFFFFF if a2 == "none" else int(a2, 16)
+        return (MAGIC << 16) | (slice_arg(a3) << 8) | 8, (int(a1) << 24) | sd
     if verb == "policy":
         return (MAGIC << 16) | 1, POLICIES[a1]
     if verb == "weight":
@@ -170,6 +183,26 @@ class XappTest(unittest.TestCase):
     def test_reset(self) -> None:
         self.check_command("reset")
 
+    def test_slice_commands(self) -> None:
+        self.check_command("slice-weight", "0", "1")
+        self.check_command("slice-weight", "3", "3000")
+        self.check_command("slice-weight", "7", "65535")
+        self.check_command("slice-cap", "2", "30")
+        self.check_command("slice-cap", "2", "0")
+        self.check_command("slice-cap", "7", "275")
+        self.check_command("assoc", "56a2", "1")
+        self.check_command("assoc", "56a2", "0")
+        self.check_command("assoc", "56a2", "none")
+        self.check_command("nssai-map", "1", "none", "2")
+        self.check_command("nssai-map", "2", "123456", "7")
+        self.check_command("nssai-map", "255", "0", "none")
+
+    def test_slice_words_match_the_documented_layout(self) -> None:
+        self.assertEqual(encode("slice-weight", "3", "3000"), (0x53430305, 3000))
+        self.assertEqual(encode("assoc", "1001", "none"), (0x5343FF07, 0x10010000))
+        self.assertEqual(encode("nssai-map", "2", "none", "3"), (0x53430308, 0x02FFFFFF))
+        self.assertEqual(encode("policy", "slice"), (0x53430001, 4))
+
     def test_invalid_commands_send_nothing(self) -> None:
         invalid = [
             [],
@@ -185,6 +218,21 @@ class XappTest(unittest.TestCase):
             ["cap", "e350", "4"],
             ["cap", "e350", "276"],
             ["cap", "*", "20"],
+            ["slice-weight", "8", "5"],
+            ["slice-weight", "1", "0"],
+            ["slice-weight", "1", "65536"],
+            ["slice-weight", "1"],
+            ["slice-cap", "1", "4"],
+            ["slice-cap", "1", "276"],
+            ["assoc", "e350", "8"],
+            ["assoc", "0", "1"],
+            ["assoc", "e350"],
+            ["nssai-map", "256", "none", "1"],
+            ["nssai-map", "1", "1000000", "1"],
+            ["nssai-map", "1", "zz", "1"],
+            ["nssai-map", "1", "none", "9"],
+            ["nssai-map", "1", "none"],
+            ["policy", "slice", "extra", "words", "here"],
             ["frobnicate"],
         ]
         for args in invalid:
@@ -245,6 +293,20 @@ class OaiBuildFlagsTest(unittest.TestCase):
                 with self.subTest(fortify=fortify):
                     result = subprocess.run(
                         ["gcc", *OAI_FLAGS, fortify, "-I", str(HEADER.parent), "-c", str(source), "-o", os.devnull],
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_scheduler_sources_compile_with_the_oai_build_flags(self) -> None:
+        # the sources that go into the gNB image, against the stand-in OAI headers, with the -Werror flags of the OAI build
+        src = REPOSITORY / "gnb" / "src"
+        stub = REPOSITORY / "gnb" / "test" / "oai_stub"
+        for name in ("nr_dl_ctrl_state.c", "nr_dl_ctrl_alloc.c", "gNB_scheduler_dlsch_ctrl_policy.c"):
+            for fortify in ("-D_FORTIFY_SOURCE=0", "-D_FORTIFY_SOURCE=2", "-D_FORTIFY_SOURCE=3"):
+                with self.subTest(source=name, fortify=fortify):
+                    result = subprocess.run(
+                        ["gcc", *OAI_FLAGS, fortify, "-DMAX_MOBILES_PER_GNB=32", "-I", str(stub), "-I", str(src), "-c", str(src / name), "-o", os.devnull],
                         capture_output=True,
                         text=True,
                     )
