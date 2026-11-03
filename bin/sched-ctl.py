@@ -173,6 +173,16 @@ def cmd_measure(seconds, **kw):
         for sid in sorted(per):
             n, rbs, byt = per[sid]
             print(f"{sid:<8}{n:>5}{rbs:>12}{100.0 * rbs / total:>9.1f}{byt * 8 / seconds / 1e6:>9.2f}")
+        # what the policy itself granted in the window (sum of the per-UE counters, which are never adjusted),
+        # to compare with the resource blocks the MAC reports above
+        gdelta = {u["rnti"]: u["granted_rbs"] - before.get(u["rnti"], {"granted_rbs": 0})["granted_rbs"] for u in u1}
+        gtot = sum(max(v, 0) for v in gdelta.values())
+        if gtot:
+            gper = {}
+            for rnti, v in gdelta.items():
+                gper[member.get(rnti, 0)] = gper.get(member.get(rnti, 0), 0) + max(v, 0)
+            print("policy grants in window, share% by slice: "
+                  + "  ".join(f"{sid}:{100.0 * gper[sid] / gtot:.1f}" for sid in sorted(gper)))
     calls = int(h1["calls"]) - int(h0["calls"])
     if h1["version"] == h0["version"] and int(h1.get("ws_groups", 0)) > int(h0.get("ws_groups", 0)):
         d = {k: int(h1[k]) - int(h0[k]) for k in ("commit_fail", "multi_ue_slots", "ws_groups", "ws_free_rb", "ws_demand_rb", "ws_planned_rb", "ws_committed_rb")}

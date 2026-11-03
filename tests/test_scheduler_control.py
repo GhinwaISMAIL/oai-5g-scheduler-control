@@ -127,6 +127,9 @@ def test_client_measure_reports_slices(server):
     rows = {line.split()[0]: line.split() for line in r.stdout.splitlines() if line[:1] in "12" and len(line.split()) == 5}
     assert float(rows["1"][3]) == pytest.approx(75.0, abs=0.1)
     assert float(rows["2"][3]) == pytest.approx(25.0, abs=0.1)
+    # the policy-side share is printed under the slice table, from the per-UE grant counters
+    grants = [line for line in r.stdout.splitlines() if line.startswith("policy grants in window")]
+    assert len(grants) == 1 and "1:" in grants[0] and "2:" in grants[0], r.stdout
 
 
 @pytest.mark.parametrize("args", [("weight", "1001", "0"), ("weight", "9999", "10"), ("cap", "1001", "3"), ("weight", "zz", "10"),
