@@ -77,14 +77,17 @@ sudo python3 bin/sched-ctl.py map --containers ric5g-ue-cell1-1,ric5g-ue-cell1-2
 ```
 
 Read the address of each UE container (the order differs between reservations) and start an
-iperf3 server in each; a server that died is the usual reason for a UE without traffic:
+iperf3 server in each. The iperf3 server in a UE container can crash (a `Segmentation fault` at
+the end of `/tmp/srv.txt`, then `Connection refused` for the next client), and a UE without a server
+has no traffic, which invalidates a run. Each container therefore runs a loop that starts a fresh
+one-shot server after every test:
 
 ```bash
 for i in 1 2 3 4; do echo -n "ue-$i "; sudo docker exec ric5g-ue-cell1-$i ip -4 -o addr show oaitun_ue1 | awk '{print $4}'; done
-for i in 1 2 3 4; do sudo docker exec ric5g-ue-cell1-$i pkill iperf3; done
+for i in 1 2 3 4; do sudo docker exec ric5g-ue-cell1-$i pkill -f "iperf3 -s"; done
 sleep 2
-for i in 1 2 3 4; do sudo docker exec -d ric5g-ue-cell1-$i sh -c 'iperf3 -s > /tmp/srv.txt 2>&1'; done
-sleep 2
+for i in 1 2 3 4; do sudo docker exec -d ric5g-ue-cell1-$i sh -c 'while true; do iperf3 -s -1 >> /tmp/srv.txt 2>&1; sleep 1; done'; done
+sleep 3
 for i in 1 2 3 4; do echo -n "ue-$i "; sudo docker exec ric5g-ue-cell1-$i pgrep iperf3 || echo "NO iperf3 server"; done
 ```
 
@@ -128,7 +131,10 @@ chmod +x ~/x.sh ~/dl.sh ~/chk.sh
 The default list of `dl.sh` is the four UEs, whatever their order. For a subset use the
 variables, for example `~/dl.sh q3 $IP1 $IP4`. One iperf3 server takes one test at a time: a new
 client started while the previous test of the same UE is still running fails ("server is busy"
-or "control socket has closed unexpectedly"), and `chk.sh` shows it.
+or "control socket has closed unexpectedly"). `chk.sh` prints the last line of each client log;
+iperf3 buffers its output when it writes to a file, so an **empty** line means no error so far and
+an error shows as text. The `map` command of `sched-ctl.py` cannot tell the UEs apart while data
+from a previous run is still being delivered; read the RNTIs soon after the cell is up.
 
 ## 3. The runs
 
@@ -294,8 +300,10 @@ echo "=== TRAFFIC STARTED: paste the cell1 block now ==="
 Expect, in the window 10 s to 30 s after the second phase starts: slice rows 50 / 50 (within
 about 2 points), `U1` about 50 % and the others about 16.7 % each, the policy-grants line equal
 to the slice rows. With the unbounded credit the slice rows would read about 75 / 25.
-To see the first phase as well, run `sched-ctl.py measure --seconds 20` on cell1 during it: slice 1
-should show a few percent of the resource blocks, the 1 Mbit/s it was given.
+To see the first phase as well, run `sched-ctl.py measure --seconds 20` on cell1 during it. The one
+window taken showed slice 1 at 21.9 % of the resource blocks for 1.12 Mbit/s (expected under 10 %;
+the window probably fell into the ramp-up of the traffic, total 7.58 Mbit/s), so that premise is not
+confirmed by a measurement; the counters afterwards show it (see section 6).
 
 ### After the runs
 
@@ -311,7 +319,7 @@ Paste the cell-block outputs of all runs. A run is valid only when the version o
 It tests the policy, the commands over E2 and the read-back on a live gNB, with membership by
 RNTI and the S-NSSAI the MAC reports. It does not test two different S-NSSAIs in the core
 (configuration of the gNB, AMF, SMF, UPF, subscribers and UEs), the standard FlexRIC slice
-message, or throughput guarantees. Results of the earlier policies show that the total
+message, throughput guarantees, or a UE that attaches or reconnects during a run (section 6). Results of the earlier policies show that the total
 throughput of a run varies by about ±10 % at the same resource-block rate, so judge by the
 resource-block shares.
 
@@ -372,3 +380,50 @@ Open points:
   so every run starts with data in the buffers. Some values in `status` therefore include grants
   made before the run's commands: use the per-UE counters and the `measure` lines, not the slice
   counters, which also contain the credit rule's adjustments and are not a count of grants.
+
+## 6. Results on the revised image
+
+Image `ghinwa555/oai-gnb-ctrl:70508eba-e4382b42bb15` (built on the cell node as
+`ric5g/oai-gnb-ctrl:70508eba-e4382b42bb15`): credit of a slice bounded at 2000 resource blocks, slice
+cap as a limit on the whole slice. Same reservation type and method as section 5. In every window the
+version was the same at both ends, and the policy-side line equals the MAC-side slice rows unless
+stated.
+
+| Run | Setup | Expected | Measured | Verdict |
+| --- | --- | --- | --- | --- |
+| 7 | `U1` alone in slice 1 at 1 Mbit/s for 60 s, then all four at 15 Mbit/s; equal slice weights | 50 : 50 | **50.0 : 50.0**; `U1` 50.0 %, the others 16.7 % each (62,246 / 62,311 / 62,239 RBs) | pass; the credit rule had raised the counter of slice 1 by about 1.6 million RBs |
+| 5 | slice cap 20 on slice 1 (two UEs), weights equal | about 19 % | **19.2 : 80.8**; UEs 9.6 / 9.6 / 40.4 / 40.4 %; 104.2 RBs per call; 167 refused grants (2214 with the first version) | pass |
+| 1 | 2 + 2 UEs, weights 3000 : 1000 | 75 : 25 | 74.0 : 26.0 (UEs 37.0 / 37.0 / 13.0 / 13.0) | about 1 point short, cause not found |
+| 3 | 3 UEs against 1 with two silent, 3000 : 1000 | `U1` 75, `U4` 25 | `U1` 74.9, `U4` 25.1, silent UEs 15 RBs each | pass |
+| 1, repeated | as run 1 | 75 : 25 | **75.0 : 25.0** (37.5 / 37.5 / 12.5 / 12.5) | pass; the 74.0 did not recur |
+| 4 | UE weights 3000 and 1000 in slice 1 | 37.5 / 12.5 / 25 / 25 | `U1` received no traffic (its iperf3 server had crashed): invalid | invalid; the slices stayed at 50 : 50 |
+| 4, repeated | as run 4, servers restarted | 37.5 / 12.5 / 25 / 25 | **37.5 / 12.5 / 25.0 / 25.0**; slices 50.0 : 50.0 | pass |
+| 6 | rule `sst=1 sd=none -> 2` applied 5 s into the traffic | all four in slice 2 `via nssai` | exactly that; 25.0 % each | pass |
+| 6b | the rule plus `assoc U1 1` | `U1` in slice 1 `via rnti` at 50 %, the others 16.7 % | `U1` 50.0 %, slices 50.0 : 50.0; the three UEs of slice 2 had 6.5 / 7.1 / 36.4 % | pass at slice level; see below |
+| 6c | the same state, traffic repeated (74.7 : 25.3 with the first version) | 50 : 50 | **50.0 : 50.0**, `U1` 50.0 %; slice 2: 4.9 / 3.8 / 41.3 % | pass at slice level; see below |
+
+What this establishes: the commands, the weights of slices and of UEs, the caps, membership by
+RNTI and by the S-NSSAI the MAC reports (rule, and association over rule), and the bound on the
+credit of a slice, all on a live single-cell gNB with four UEs. The slice shares were within
+0.2 point of the target in eight of the nine valid windows and 1.0 point off in one (run 1).
+
+**A finding that is not corrected yet: the credit of a single UE is not bounded.** Between runs 6
+and 6b the UE of `ric5g-ue-cell1-2` re-established its connection without a container restart (same
+address, new RNTI: `0x8d99` became `0x874e`). A new UE starts with a grant counter of 0 while its
+peers were at about 1.2 million resource blocks, so inside its slice it was served first until it
+had caught up: 36.4 % and 41.3 % of the cell in two consecutive windows, against 6.5 and 3.8 to
+4.9 % for its peers. The gap closed within the third window. The slice split was not affected. The
+same holds for `wrr`, whose counters have the same property, and for any UE that attaches during a
+run. The remedy is the same as for slices (a UE that becomes backlogged enters at the level of
+its backlogged peers, less a small allowance); it needs a change in `gnb/src` and a new image.
+Also seen in these windows and not explained: `0xf85a` received 0.05 Mbit/s with 18,414 resource
+blocks in the 6c window, and `0x874e` 0.46 Mbit/s with 137,321 resource blocks in the 6b window.
+
+Other points:
+
+- The iperf3 server in a UE container crashed twice (`Segmentation fault`, then `Connection
+  refused` or `control socket has closed unexpectedly` for the client). The loop in section 2
+  restarts it after every test. This is probably also why the iperf3 summaries were missing in
+  all earlier runs.
+- Four minutes after the last run, two UEs were still receiving about 1.8 MB per probe interval:
+  the queues of a 75 s run at 15 Mbit/s per UE take minutes to drain.

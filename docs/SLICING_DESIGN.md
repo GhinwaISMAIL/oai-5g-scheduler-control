@@ -3,8 +3,10 @@
 Status: step A (below) is implemented and tested on the host, on branch `slicing`. A first
 version was run on a live gNB with four UEs (`SLICING_LIVE_TEST.md`, section 5); it showed two
 points that this document now reflects: the credit of a slice is bounded (policy item 5) and the
-slice cap limits the slice as a whole (policy item 4). The revised version has not been run live.
-Steps B and C are not started.
+slice cap limits the slice as a whole (policy item 4). The revised version was run live with the
+expected shares (`SLICING_LIVE_TEST.md`, section 6). Open: the credit of a single UE is not bounded
+(a new or reconnected UE is served first in its slice until it has caught up). Steps B and C are
+not started.
 
 ## Goal
 
