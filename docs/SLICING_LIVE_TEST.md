@@ -6,29 +6,48 @@ different result is a finding and not something to explain afterwards.
 
 ## 1. Bring the reservation to the `slicing` branch
 
-The sources of the gNB image changed, so the image has to be built or pulled again and the
-xApp on the core node rebuilt. On a running reservation, in this order.
+The sources of the gNB image changed, so the image has to be built or pulled and the xApp on
+the core node rebuilt.
 
-On the core node:
+**Reservation started from the `slicing` branch** (the profile was instantiated from it): the
+nodes already run this code. The core builds the xApp by itself. The cell node finds that
+`gnb_ctrl_image` does not exist on the registry and builds the image itself, about 25 minutes;
+**run nothing else on cell1 meanwhile**. `bin/cell-setup.sh` restarts Docker, so a second
+`node-setup.sh cell` while the build runs cancels it ("context canceled" in
+`/local/logs/gnb-build.log`). Watch it with:
 
 ```bash
-cd /local/repository && sudo git fetch origin slicing && sudo git checkout slicing && sudo git pull --ff-only
-sudo bash bin/node-setup.sh core 0 1 4 uniform AWGN >> /local/logs/setup.log 2>&1
-cat /local/logs/CORE_READY
-ls /opt/oai-src/openair2/E2AP/flexric/build/examples/xApp/c/ctrl/xapp_sched_ctrl
+tail -n 1 /local/logs/gnb-build.log; ls /local/logs/GNB_IMAGE /local/logs/CELL_READY
 ```
 
-On cell1 (the build takes about 25 minutes; if the image from the profile default has been
-pushed, `gnb/build-gnb-image.sh` is not needed and the profile pulls it):
+If the build was cancelled or failed, start one build alone, in the background, wait for the
+tag, then start the cell once:
 
 ```bash
-cd /local/repository && sudo git fetch origin slicing && sudo git checkout slicing && sudo git pull --ff-only
-sudo bash gnb/build-gnb-image.sh | tail -n 1
+cd /local/repository
+sudo bash -c 'nohup bash gnb/build-gnb-image.sh > /local/logs/gnb-build.stdout 2>&1 &'
+tail -n 1 /local/logs/gnb-build.log; cat /local/logs/gnb-build.tag 2>/dev/null   # repeat until the tag appears
 sudo GNB_CTRL=1 bash bin/node-setup.sh cell 1 1 4 uniform AWGN >> /local/logs/setup.log 2>&1
 cat /local/logs/GNB_IMAGE /local/logs/CELL_READY
 ```
 
-`GNB_IMAGE` must show a tag that ends with the hash of this checkout's `gnb/src` and
+**Running reservation started from `main`:** switch both nodes, core first.
+
+```bash
+cd /local/repository && sudo git fetch origin slicing && sudo git checkout slicing && sudo git pull --ff-only
+sudo bash bin/node-setup.sh core 0 1 4 uniform AWGN >> /local/logs/setup.log 2>&1      # core node only
+```
+
+then on cell1 run the same `git` line and the four commands of the previous block.
+
+Check on the core node that the xApp is the new one (it does not contact the gNB):
+
+```bash
+/opt/oai-src/openair2/E2AP/flexric/build/examples/xApp/c/ctrl/xapp_sched_ctrl bogus 2>&1 | head -12
+```
+
+The usage lists `slice-weight`, `slice-cap`, `assoc` and `nssai-map`. On cell1,
+`/local/logs/GNB_IMAGE` must show a tag that ends with the hash of this checkout's `gnb/src` and
 `gnb/patches` (`profile.py` and `tests/test_single_cell_profile.py` carry the same tag).
 
 ## 2. Variables and helper scripts
