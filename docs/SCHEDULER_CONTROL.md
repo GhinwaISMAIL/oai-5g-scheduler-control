@@ -136,7 +136,35 @@ What this shows, and what it does not:
 - With equal weights the slot is shared in about half of the contested slots (48 to 54 %). With 3:1 weights the fraction falls to its floor (2 %), the refusals fall in slot indices 5, 6, 15 and 16, and the policy behaves like `wrr`: the split is 74.5 : 25.5, at the limit that the ACK/NACK allowance permits, not 75 : 25 by design.
 - The receivers agree with the gNB: in the 3:1 runs the UE with weight 3000 received 12.6 to 12.8 Mbit/s without loss, the other 6.8 to 7.1 Mbit/s averaged over a longer drain with 24 to 27 % of its datagrams lost.
 - The `pf` total here (about 19 Mbit/s at 104.6 to 104.8 resource blocks per call) is lower than in the first reservation (24.4 Mbit/s at 104.9). The stock policy shows the same, so it is not caused by the scheduler; the cause was not determined. Compare only runs of the same session.
-- Two runs per `wshare` configuration, three of `pf`, one reservation. `wrr`, `rr` and caps were not repeated with this image; their results above are from the earlier image.
+- Two runs per `wshare` configuration, three of `pf`, one reservation. `wrr`, `rr` and caps were not repeated in this session; they were measured with four UEs in the next reservation (below).
+
+Third reservation, same image, single cell, four UEs, AWGN channel. 15 Mbit/s UDP offered to each
+UE (60 Mbit/s in total against about 13 Mbit/s that the cell carries) for 75 s, `measure` over a 20 s
+window started about 10 s after the traffic. Every policy and weight was set from the xApp
+over E2 and read back with `sched-ctl.py status`. The UEs are `0x56a2` (`ric5g-ue-cell1-1`, 12.1.1.2),
+`0x34b1` (`-2`, 12.1.1.3), `0xb38a` (`-3`, 12.1.1.4) and `0x8f45` (`-4`, 12.1.1.5). Weighted runs use
+4000 : 2000 : 1000 : 1000 in that order. Runs where `status` or `measure` showed that a command was still
+being applied during the window were discarded and repeated, except the one marked below.
+
+| Run | Share `0x56a2` / `0x34b1` / `0xb38a` / `0x8f45` | Cell total |
+| --- | --- | --- |
+| `pf` | 25.8 / 25.5 / 23.6 / 25.1 % | 13.83 Mbit/s |
+| `pf`, repeat | 25.2 / 25.3 / 24.0 / 25.5 % | 11.16 Mbit/s |
+| `rr` | 23.9 / 23.5 / 21.8 / 30.8 % | 13.27 Mbit/s |
+| `wrr`, equal weights | 25.0 / 25.0 / 25.0 / 25.0 % | 11.79 Mbit/s |
+| `wrr`, equal weights, repeat | 25.1 / 25.1 / 24.6 / 25.1 % | 13.77 Mbit/s |
+| `wrr`, 4:2:1:1 (see note) | 50.0 / 25.0 / 12.5 / 12.5 % | 8.64 Mbit/s |
+| `wshare`, equal weights | 25.0 / 25.0 / 25.0 / 25.0 % | 13.83 Mbit/s |
+| `wshare`, 4:2:1:1 | 50.0 / 25.0 / 12.5 / 12.5 % | 13.74 Mbit/s |
+| `wshare`, equal weights, cap 20 on `0x56a2` | 14.5 / 28.5 / 28.5 / 28.5 % | 13.44 Mbit/s |
+
+- Weights are followed with four UEs by both weighted policies: 4:2:1:1 gives 50.0 / 25.0 / 12.5 / 12.5 % of the resource blocks and 3.9 : 2.0 : 1 : 1 in throughput. The `wshare` run used 104.5 resource blocks per call and 50 % sharing, but in 1771 of its 1833 shared slots only one UE was actually granted, so with these weights it behaves mostly like time sharing. It was not tested at ratios the ACK/NACK allowance cannot meet.
+- Note on the `wrr` 4:2:1:1 row: the `measure` window started before the last two `weight` commands had been delivered and before the traffic was complete (13,186 resource blocks per second against about 18,800 in the other runs). Those two commands set 1000, the value the UEs already had, so the weights in effect were 4:2:1:1 for the whole window and the shares are credible, but the total is not comparable and the run was not repeated cleanly.
+- The cap holds: `0x56a2` with a cap of 20 resource blocks per grant received 14.5 % of the resource blocks, the others 28.5 % each, and the cell still used 104.2 resource blocks per call.
+- The cell total scatters from 11.16 to 13.83 Mbit/s between runs of the same policy at the same resource blocks per second (18,800 to 18,900): `pf` gave both 13.83 and 11.16, `wrr` both 11.79 and 13.77. The apparent loss of `wrr` against `pf` in the first pair of runs was therefore noise, not a property of the policy. The cause of the scatter was not determined; no policy ranking by total throughput can be drawn from these runs, only by resource-block share.
+- With four UEs the simulation runs at about 180 scheduler calls per second instead of about 250 with two UEs, with the same number of bits per call, so absolute Mbit/s are not comparable with the two-UE tables. Shares are.
+- `rr` gave `0x8f45` 30.8 % in the one run made. A repeat was not made. A possible cause is the round-robin order lining up with the TDD frame of the cell, since `wrr`, which counts resource blocks, does not show it; this was not verified.
+- The sender side of the iperf3 test shows a steady 15.0 Mbit/s per UE for the whole transfer, so the cell was the bottleneck in every run. The receiver summaries were not captured, so the figures above come from the gNB counters only.
 
 The acknowledgement limit. Measured on the live gNB (two UEs, saturated downlink):
 a `wshare` that split every slot between both UEs used only 74 to 78 % of the
@@ -168,7 +196,7 @@ cell total close to `pf`, shares following the weights as far as the allowance a
 Not done yet, and required before relying on it:
 
 - Building the gNB image (the stand-in headers in `gnb/test/oai_stub` are transcribed from the pinned source; the real compile happens in the image build).
-- Longer and repeated runs, other channel conditions and more than two UEs: the live results above are one reservation, two UEs, AWGN.
+- Longer and repeated runs, other channel conditions and more than four UEs: the live results above come from three reservations, with two and four UEs, AWGN. Single runs of 20 s were used for most four-UE rows.
 - The E2 path is confirmed on one reservation: policy, weight, cap and reset sent by `xapp_sched_ctrl` through the RIC were applied by the gNB (read back with `sched-ctl.py status`), a command for an unknown RNTI was refused by the gNB while the xApp still reported it as delivered, and an invalid word was rejected by the xApp. It has not been tried with several gNBs or with the E42 subscription load of the monitoring xApps running at the same time.
 - Uplink scheduling is not controlled. Handovers and multi-cell coordination are outside scope.
 

@@ -138,7 +138,7 @@ def cmd_measure(seconds, **kw):
         d = {k: int(h1[k]) - int(h0[k]) for k in ("commit_fail", "multi_ue_slots", "ws_groups", "ws_free_rb", "ws_demand_rb", "ws_planned_rb", "ws_committed_rb")}
         g = d["ws_groups"]
         print(f"wshare per call: free {d['ws_free_rb'] / g:.1f} demand {d['ws_demand_rb'] / g:.1f} planned {d['ws_planned_rb'] / g:.1f} "
-              f"committed {d['ws_committed_rb'] / g:.1f} RBs; commit_fail {d['commit_fail']}, multi-UE calls {d['multi_ue_slots']} of {g}")
+              f"committed {d['ws_committed_rb'] / g:.1f} RBs; commit_fail {d['commit_fail']}, multi-UE calls {d['multi_ue_slots']}, planned as shared groups {g}")
         mode = {k: int(h1[k]) - int(h0[k]) for k in ("ws_shared_slots", "ws_single_slots", "ws_lost_slots")}
         print(f"wshare slots in window: shared {mode['ws_shared_slots']}, one UE at a time {mode['ws_single_slots']}, "
               f"all grants refused {mode['ws_lost_slots']}; sharing now in {int(h1['ws_share_milli']) / 10:.0f}% of the contested slots")
