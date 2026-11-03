@@ -1,7 +1,10 @@
 # Slice-aware downlink scheduling: design
 
-Status: step A (below) is implemented and tested on the host, on branch `slicing`; it has
-not been run on a live gNB (`SLICING_LIVE_TEST.md`). Steps B and C are not started.
+Status: step A (below) is implemented and tested on the host, on branch `slicing`. A first
+version was run on a live gNB with four UEs (`SLICING_LIVE_TEST.md`, section 5); it showed two
+points that this document now reflects: the credit of a slice is bounded (policy item 5) and the
+slice cap limits the slice as a whole (policy item 4). The revised version has not been run live.
+Steps B and C are not started.
 
 ## Goal
 
@@ -51,10 +54,18 @@ the largest free block) and changes only the order and the accounting:
    the deficit of a slice is its granted resource blocks divided by its weight, and the deficit
    of a UE is as today. Slices with no backlogged UE do not take part.
 3. Each granted block is added to the counters of the UE and of its slice.
-4. A cap is the smaller non-zero value of the UE cap and the slice cap.
-5. A slice that becomes backlogged after being idle has its counter raised so that its deficit
-   equals the smallest deficit among the other backlogged slices. Without this a slice that was
-   idle would take every slot until it caught up, starving the others.
+4. The cap of a slice limits the resource blocks all UEs of the slice take together in one
+   scheduler call; the cap of a UE limits that UE inside it. A remainder below the minimum grant
+   (5 resource blocks) is not used, and what a capped slice leaves is taken by the next slice in
+   the order, so a slot can serve several UEs. Retransmissions are served before the new data
+   and do not count against a cap.
+5. Credit is bounded. Whenever a slice has a UE with new data, its counter is raised, never
+   lowered, so that its deficit is at most `NR_CTRL_SLICE_CREDIT_RBS` (2000 resource blocks, in
+   units of its own weight) below the lowest deficit of the other backlogged slices. Without a
+   bound, a slice that sends little for a while falls behind and then takes every slot until it has
+   caught up: in the first live run this gave a slice of weight 1000 about 75 % of the cell against
+   another of weight 1000 for the whole run. The first version only acted after 500 consecutive
+   calls without data, which a slice with sparse data never reaches.
 
 Consequences, stated before they are measured:
 
@@ -108,8 +119,10 @@ Host side, in `gnb/test/test_ctrl.c` and `tests/`:
 - Shares: with a slice of two UEs and a slice of one UE, weights 3 : 1, the resource blocks split 75 : 25
   whatever the number of UEs and whether one of them stops having data (the property per-UE weights do not have).
 - Inside a slice the split follows the UE weights.
-- Idle slice: a slice that returns after a long idle period does not take more than its weight over the next window.
-- Caps: slice cap and UE cap combine as the smaller value.
+- Credit: a slice that returns after a long idle period, or that had data in only one call out of 20,
+  gets a burst of at most the credit and then its weight; with equal and with unequal weights.
+- Caps: the slice cap limits the slice in total per slot; the UE cap works inside it; a remainder below
+  the minimum grant is not used; without a slice cap the first UE takes the slot as before.
 - Membership: precedence of `ASSOC` over `NSSAIMAP` over slice 0; a disconnecting UE loses its association; a rule survives.
 - Retransmissions are still served first and the counters are not charged for them.
 - E2: round trip of every new word, rejection of out-of-range values, old words unchanged.
@@ -142,6 +155,8 @@ C. Standard FlexRIC slice message: a handler in `ran_func_slice.c` that maps sli
 
 1. Eight slices, ids 0 to 7, slice 0 as default.
 2. Inside-slice policy fixed to weighted round robin by UE weight.
-3. Slice cap as the largest grant per slot to any UE of the slice (the same meaning as the UE cap).
-4. The idle-slice rule in item 5 of the policy.
+3. Slice cap as the total of the slice per slot (revised: the first version limited each UE of the
+   slice separately, so a slice with n UEs could take n times the cap).
+4. Bounded credit of 2000 resource blocks (item 5 of the policy; revised: the first version had an
+   idle rule of 500 calls).
 5. A guaranteed minimum share per slice is not part of this step.

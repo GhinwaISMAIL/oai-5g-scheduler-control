@@ -773,6 +773,20 @@ static void slice_policy_on(void)
   ctl("POLICY slice", r, sizeof(r));
 }
 
+/* three UEs: 1001 and 1002 in slice 1 (slice cap `scap`), 1003 in slice 2; UE 1001 gets `ucap` */
+static void cap_case(int scap, int ucap)
+{
+  char r[4096], c[48];
+  slice_policy_on();
+  ctl("ASSOC 1001 1", r, sizeof(r));
+  ctl("ASSOC 1002 1", r, sizeof(r));
+  ctl("ASSOC 1003 2", r, sizeof(r));
+  snprintf(c, sizeof(c), "SLICE 1 CAP %d", scap);
+  ctl(c, r, sizeof(r));
+  snprintf(c, sizeof(c), "CAP 1001 %d", ucap);
+  ctl(c, r, sizeof(r));
+}
+
 static void test_slices(void)
 {
   char r[4096], g[8192];
@@ -912,36 +926,89 @@ static void test_slices(void)
   memset(got, 0, sizeof(got));
   slice_run(2, NULL, 2000, got);
   CHECK(fabs(got[1] / (got[0] + got[1]) - 0.5) < 0.01);
-  /* a gap shorter than the idle period keeps the slice's accumulated deficit: it is served first on return */
+  /* --- credit is bounded: a slice with data in only one call out of 20 is never idle for long, but the
+   * credit it collects stays below NR_CTRL_SLICE_CREDIT_RBS, so it cannot take every slot afterwards */
+  slice_policy_on();
+  ctl("ASSOC 1001 1", r, sizeof(r));
+  ctl("ASSOC 1002 2", r, sizeof(r));
+  int quiet1[2] = {1, 0}; /* the UE of slice 1 has no data */
+  memset(got, 0, sizeof(got));
+  for (int k = 0; k < 400; k++) {
+    slice_run(2, quiet1, 19, got);
+    slice_run(2, NULL, 1, got);
+  }
+  memset(got, 0, sizeof(got));
+  slice_run(2, NULL, 2000, got);
+  CHECK(got[0] - got[1] > 0.0); /* it does get its burst ... */
+  CHECK(got[0] - got[1] <= NR_CTRL_SLICE_CREDIT_RBS + 2.0 * NSLOT_RB); /* ... of the size of the credit and not more */
+  memset(got, 0, sizeof(got));
+  slice_run(2, NULL, 2000, got);
+  CHECK(fabs(got[0] / (got[0] + got[1]) - 0.5) < 0.01);
+  /* the same with unequal weights: the burst is measured in the slice's own grants */
+  slice_policy_on();
+  ctl("SLICE 1 WEIGHT 3000", r, sizeof(r));
+  ctl("ASSOC 1001 1", r, sizeof(r));
+  ctl("ASSOC 1002 2", r, sizeof(r));
+  memset(got, 0, sizeof(got));
+  for (int k = 0; k < 400; k++) {
+    slice_run(2, quiet1, 19, got);
+    slice_run(2, NULL, 1, got);
+  }
+  memset(got, 0, sizeof(got));
+  slice_run(2, NULL, 4000, got);
+  CHECK(fabs(got[0] / (got[0] + got[1]) - 0.75) < 0.02);
+  /* a gap shorter than the credit costs nothing: the slice is served first until it has caught up */
   slice_policy_on();
   ctl("ASSOC 1001 1", r, sizeof(r));
   ctl("ASSOC 1002 2", r, sizeof(r));
   memset(got, 0, sizeof(got));
   slice_run(2, NULL, 200, got);
   memset(got, 0, sizeof(got));
-  slice_run(2, idle2, 100, got);
-  CHECK(got[0] == 100.0 * NSLOT_RB);
+  slice_run(2, idle2, 10, got); /* slice 2 sends nothing for 10 calls (about half the credit) */
+  CHECK(got[0] == 10.0 * NSLOT_RB);
   memset(got, 0, sizeof(got));
-  slice_run(2, NULL, 200, got);
-  CHECK(got[1] > got[0]); /* it catches up what it missed */
+  slice_run(2, NULL, 40, got);
+  CHECK(got[1] - got[0] >= 10.0 * NSLOT_RB - 2.0 * NSLOT_RB); /* it catches up what it missed */
 
-  /* --- caps: the smaller of the UE cap and the slice cap */
+  /* --- the slice cap limits what all UEs of the slice take together in one call */
+  sim_setup(3);
+  memset(slice_nssai, 0, sizeof(slice_nssai));
   slice_policy_on();
   ctl("ASSOC 1001 1", r, sizeof(r));
-  ctl("ASSOC 1002 2", r, sizeof(r));
+  ctl("ASSOC 1002 1", r, sizeof(r));
+  ctl("ASSOC 1003 2", r, sizeof(r));
   ctl("SLICE 1 CAP 30", r, sizeof(r));
-  sim_slot_prepare(2, 1000000);
-  CHECK(sim_slot(2, 4) == 2);
-  CHECK(cands[0].sched_pdsch.rbSize == 30 && cands[1].sched_pdsch.rbSize == NSLOT_RB - 30);
-  ctl("CAP 1001 20", r, sizeof(r));
-  sim_slot_prepare(2, 1000000);
-  sim_slot(2, 4);
-  CHECK(cands[0].sched_pdsch.rbSize == 20);
-  ctl("CAP 1001 40", r, sizeof(r));
-  sim_slot_prepare(2, 1000000);
-  sim_slot(2, 4);
-  CHECK(cands[0].sched_pdsch.rbSize == 30);
-  CHECK(nr_ctrl_cap_min(0, 0) == 0 && nr_ctrl_cap_min(0, 7) == 7 && nr_ctrl_cap_min(7, 0) == 7 && nr_ctrl_cap_min(9, 7) == 7);
+  sim_slot_prepare(3, 1000000);
+  CHECK(sim_slot(3, 4) == 2);
+  CHECK(cands[0].scheduled && cands[0].sched_pdsch.rbSize == 30);
+  CHECK(!cands[1].scheduled); /* nothing of the cap is left for the second UE of the slice */
+  CHECK(cands[2].scheduled && cands[2].sched_pdsch.rbSize == NSLOT_RB - 30);
+  memset(got, 0, sizeof(got));
+  slice_run(3, NULL, 2000, got);
+  CHECK(got[0] + got[1] == 30.0 * 2000 && got[2] == (NSLOT_RB - 30.0) * 2000);
+  CHECK(fabs(got[0] - got[1]) / (got[0] + got[1]) < 0.02); /* the two UEs take turns */
+  ctl("GET", g, sizeof(g));
+  CHECK(slice_field(g, 1, "cap=") == 30);
+  /* the UE cap works inside the slice cap (each case starts from clean counters, so UE 1001 leads) */
+  cap_case(30, 20);
+  sim_slot_prepare(3, 1000000);
+  CHECK(sim_slot(3, 4) == 3);
+  CHECK(cands[0].sched_pdsch.rbSize == 20 && cands[1].sched_pdsch.rbSize == 10 && cands[2].sched_pdsch.rbSize == NSLOT_RB - 30);
+  /* a remainder below the minimum grant is not used */
+  cap_case(30, 28);
+  sim_slot_prepare(3, 1000000);
+  CHECK(sim_slot(3, 4) == 2);
+  CHECK(cands[0].sched_pdsch.rbSize == 28 && !cands[1].scheduled && cands[2].sched_pdsch.rbSize == NSLOT_RB - 28);
+  /* a UE cap above the slice cap changes nothing */
+  cap_case(30, 40);
+  sim_slot_prepare(3, 1000000);
+  CHECK(sim_slot(3, 4) == 2);
+  CHECK(cands[0].sched_pdsch.rbSize == 30 && !cands[1].scheduled);
+  /* without a slice cap the first UE of the slice takes the slot, as before */
+  cap_case(0, 0);
+  sim_slot_prepare(3, 1000000);
+  CHECK(sim_slot(3, 4) == 1);
+  CHECK(cands[0].sched_pdsch.rbSize == NSLOT_RB);
 
   /* --- membership: RNTI association, then S-NSSAI rule, then slice 0 */
   sim_setup(3);

@@ -34,8 +34,10 @@
 #define NR_CTRL_MAX_SLICE 8
 #define NR_CTRL_MAX_RULE 8
 #define NR_CTRL_NO_SD 0xFFFFFFu /* S-NSSAI without a slice differentiator */
-/* A slice with no backlogged UE for this many scheduler calls counts as idle. */
-#define NR_CTRL_SLICE_IDLE_CALLS 500
+/* A backlogged slice may be at most this many resource blocks of grants behind the other backlogged
+ * slices (in units of its own weight): the credit a slice collects while it has little or nothing to
+ * send, which it can spend as a burst once it has data again. */
+#define NR_CTRL_SLICE_CREDIT_RBS 2000
 #define NR_CTRL_SLOTS 40 /* slot indices tracked (80 slots per frame at most 40 are kept) */
 
 enum { NR_CTRL_POLICY_PF = 0, NR_CTRL_POLICY_RR = 1, NR_CTRL_POLICY_WSHARE = 2, NR_CTRL_POLICY_WRR = 3, NR_CTRL_POLICY_SLICE = 4 };
@@ -62,7 +64,6 @@ typedef struct {
   int cap;
   uint64_t granted_rbs;
   uint64_t granted_slots;
-  uint32_t idle_calls; /* consecutive scheduler calls without a backlogged UE in the slice */
   uint8_t configured;  /* a SLICE command set its weight or cap (even to the default value) */
 } nr_ctrl_slice_t;
 
@@ -126,11 +127,11 @@ int nr_ctrl_slice_of(const nr_ctrl_state_t *st, uint16_t rnti, int *source);
 double nr_ctrl_slice_deficit(const nr_ctrl_state_t *st, int slice);
 int nr_ctrl_slice_cap(const nr_ctrl_state_t *st, int slice);
 void nr_ctrl_account_slice(nr_ctrl_state_t *st, int slice, int rbs);
-/* Smaller non-zero of two caps (0 = no cap). */
-int nr_ctrl_cap_min(int a, int b);
-/* Called once per scheduler call with the slices that have a UE with new data.  A slice that comes
- * back after NR_CTRL_SLICE_IDLE_CALLS calls without one has its counter raised to the lowest deficit
- * of the slices that were already backlogged, so it cannot take every slot until it has caught up. */
+/* Called once per scheduler call with the slices that have a UE with new data.  The counter of a
+ * backlogged slice is raised, never lowered, so that its deficit is at most NR_CTRL_SLICE_CREDIT_RBS
+ * (of its own weight) below the lowest deficit of the other backlogged slices.  A slice that had
+ * little or nothing to send for a while can therefore burst by that much, but cannot take every slot
+ * until it has caught up with what it did not use. */
 void nr_ctrl_slice_activity(nr_ctrl_state_t *st, const uint8_t backlogged[NR_CTRL_MAX_SLICE]);
 void nr_ctrl_note_commit_fail(nr_ctrl_state_t *st, uint16_t rnti, int slot, int cce);
 /* Drop entries of UEs that are no longer connected. */

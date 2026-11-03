@@ -18,7 +18,7 @@ need a MAC control element are served first in every mode, as in the stock polic
 | `pf` | The stock proportional-fair policy, unchanged. This is the default after start and after `reset`. |
 | `rr` | Time-domain round robin: backlogged UEs in RNTI order, each takes what it needs from the largest free block, so normally one UE per slot. |
 | `wrr` | Weighted round robin in the time domain: the UE with the fewest granted resource blocks per unit of weight takes the slot, so resource-block shares follow the weights while each slot normally serves one UE (as `pf` does). |
-| `slice` | Weighted round robin between slices of UEs, then between the UEs of the slice. A slice's share depends on its own weight, not on how many UEs it has. See the section on slices below; not yet run on a live gNB. |
+| `slice` | Weighted round robin between slices of UEs, then between the UEs of the slice. A slice's share depends on its own weight, not on how many UEs it has. See the section on slices below. |
 | `wshare` | Weighted share of the largest free block among all UEs with downlink data, at least 5 resource blocks each, unused share handed to the others, in as many slots as the gNB accepts. In the other slots one UE at a time takes the slot, least served relative to its weight first, so the long-run split follows the weights either way. See the section on the acknowledgement limit below. |
 
 Per-UE settings (not used by `pf`):
@@ -33,9 +33,12 @@ default, which every UE not placed elsewhere belongs to). The slice that has rec
 fewest resource blocks relative to its weight takes the slot, and inside it the UE that
 has received the fewest relative to its UE weight. As in `wrr`, each slot normally serves
 one UE, retransmissions and control-element-only UEs are served first and are not charged
-to the counters. A slice that has had no UE with data for 500 scheduler calls and then
-returns has its counter raised to the lowest of the slices that were backlogged, so it
-cannot take every slot until it has caught up. Design and rationale: `SLICING_DESIGN.md`.
+to the counters. A slice that had little or nothing to send does not collect credit
+without limit: whenever a slice has data, its counter is raised if needed so that it is at
+most 2000 resource blocks (of its own weight) behind the other slices that have data.
+Without this bound a slice that sent at a low rate for a while took most of the slots for
+the next minute (see the results in `SLICING_LIVE_TEST.md`). Design and rationale:
+`SLICING_DESIGN.md`.
 
 Membership of a UE, first match wins: its RNTI association, a rule for its S-NSSAI, slice 0.
 The S-NSSAI is the one the MAC reports for the UE's first data bearer, which comes from the
@@ -44,19 +47,25 @@ PDU session set up by the core. Rules apply once the policy has seen the UE with
 ```bash
 python3 bin/sched-ctl.py policy slice
 python3 bin/sched-ctl.py slice 1 weight 3000          # slice weight (1..1000000, default 1000)
-python3 bin/sched-ctl.py slice 2 cap 30               # most resource blocks per grant to a UE of the slice
+python3 bin/sched-ctl.py slice 2 cap 30               # most resource blocks the UEs of the slice take together in one slot
 python3 bin/sched-ctl.py assoc <rnti> 1               # put a UE in slice 1 (assoc <rnti> - removes it)
 python3 bin/sched-ctl.py nssai-map 2 none 1           # UEs with SST 2 and no SD go to slice 1 (sd in hex)
 python3 bin/sched-ctl.py status                       # slice table, rules, slice and source per UE
 python3 bin/sched-ctl.py measure --seconds 20         # adds one row per slice
 ```
 
-`cap` of a UE and of its slice combine as the smaller non-zero value. `reset` clears the
-slices, the associations and the rules. Associations belong to an RNTI and are dropped when
-the UE disconnects; rules stay until `reset`. Status of this feature: tested on the host
-(`gnb/test`, `tests/`), including the property that a slice share does not change with the
-number of UEs in the slice or with how many of them have data. It has not been run on a live
-gNB; the procedure is in `SLICING_LIVE_TEST.md`.
+The cap of a slice limits the resource blocks all its UEs take together in one slot; the cap
+of a UE limits that UE inside it, and a remainder below 5 resource blocks is not used. A
+capped slice leaves the rest of the slot to the next slice, so a slot can serve several UEs.
+Retransmissions are served before the new data and do not count against the cap. `reset`
+clears the slices, the associations and the rules. Associations belong to an RNTI and are
+dropped when the UE disconnects; rules stay until `reset`.
+
+Status of this feature: tested on the host (`gnb/test`, `tests/`), including the property that
+a slice share does not change with the number of UEs in the slice or with how many of them have
+data. A first version was run on a live single-cell gNB with four UEs (results, including the
+two defects they showed, in `SLICING_LIVE_TEST.md`, section 5). The version in this branch
+(bounded credit, slice-level cap) has not been run live yet.
 
 Meaning of the numbers: a weight is a share of the resource blocks scheduled
 *among UEs that are backlogged in the same slot*. It is not a guaranteed
@@ -239,7 +248,7 @@ Not done yet, and required before relying on it:
 - Building the gNB image (the stand-in headers in `gnb/test/oai_stub` are transcribed from the pinned source; the real compile happens in the image build).
 - Longer and repeated runs, other channel conditions and more than four UEs: the live results above come from three reservations, with two and four UEs, AWGN. Single runs of 20 s were used for most four-UE rows.
 - The E2 path is confirmed on one reservation: policy, weight, cap and reset sent by `xapp_sched_ctrl` through the RIC were applied by the gNB (read back with `sched-ctl.py status`), a command for an unknown RNTI was refused by the gNB while the xApp still reported it as delivered, and an invalid word was rejected by the xApp. It has not been tried with several gNBs or with the E42 subscription load of the monitoring xApps running at the same time.
-- Slice scheduling (policy `slice`, associations, S-NSSAI rules) is implemented and tested on the host only; whether two S-NSSAIs work with the minimal core, and the slice shares on a live gNB, are not verified (`SLICING_LIVE_TEST.md`). The standard FlexRIC slice message is not mapped.
+- Slice scheduling (policy `slice`, associations, S-NSSAI rules): a first version was measured on a live gNB with four UEs (`SLICING_LIVE_TEST.md`, section 5); the revision with bounded credit and a slice-level cap is tested on the host only. Whether two different S-NSSAIs work with the minimal core is not verified. The standard FlexRIC slice message is not mapped.
 - Uplink scheduling is not controlled. Handovers and multi-cell coordination are outside scope.
 
 The sources are compiled into the OAI gNB and keep the gNB's licensing in mind

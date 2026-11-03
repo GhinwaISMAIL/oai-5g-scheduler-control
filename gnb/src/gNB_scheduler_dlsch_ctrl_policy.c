@@ -231,24 +231,36 @@ static int ctrl_sequential(const nr_dl_sched_params_t *params, nr_dl_candidate_t
   }
 
   bool led = false;
+  int slice_used[NR_CTRL_MAX_SLICE] = {0}; /* resource blocks given to each slice in this call */
   for (int k = 0; k < n; k++) {
     const seq_item_t *it = &order[(first + k) % n];
     nr_dl_candidate_t *cand = it->c;
     int cap = nr_ctrl_cap_of(&g_state, cand->rnti);
-    if (mode == SEQ_SLICE)
-      cap = nr_ctrl_cap_min(cap, nr_ctrl_slice_cap(&g_state, it->slice));
     uint16_t *vrb_map = params->vrb_map[cand->alloc_beam_idx];
     int rbStart;
     int max_rb = find_largest_free_block(vrb_map, cand->alloc_slbitmap, cand->bwp_start, cand->bwp_size, &rbStart);
     if (cap > 0 && max_rb > cap)
       max_rb = cap;
+    if (mode == SEQ_SLICE) {
+      /* the slice cap limits what all UEs of the slice together take in this call */
+      int scap = nr_ctrl_slice_cap(&g_state, it->slice);
+      if (scap > 0) {
+        int left = scap - slice_used[it->slice];
+        if (left < NR_CTRL_MIN_RB)
+          continue;
+        if (max_rb > left)
+          max_rb = left;
+      }
+    }
     if (max_rb < NR_CTRL_MIN_RB)
       continue;
     int rbSize = ctrl_demand_rbs(params, cand, max_rb);
     if (ctrl_commit(params, cand, rbStart, rbSize, cand->sched_pdsch.mcs)) {
       nr_ctrl_account(&g_state, cand->rnti, rbSize);
-      if (mode == SEQ_SLICE)
+      if (mode == SEQ_SLICE) {
         nr_ctrl_account_slice(&g_state, it->slice, rbSize);
+        slice_used[it->slice] += rbSize;
+      }
       if (!led) {
         g_state.rr_last_rnti = cand->rnti;
         led = true;

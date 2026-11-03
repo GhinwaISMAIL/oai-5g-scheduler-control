@@ -19,10 +19,8 @@ void nr_ctrl_init(nr_ctrl_state_t *st)
   st->default_weight = NR_CTRL_DEFAULT_WEIGHT;
   st->ws_share_milli = NR_CTRL_WS_SHARE_INIT;
   st->ws_acc = 1000 - NR_CTRL_WS_SHARE_INIT; /* the first contested slot is shared */
-  for (int i = 0; i < NR_CTRL_MAX_SLICE; i++) {
+  for (int i = 0; i < NR_CTRL_MAX_SLICE; i++)
     st->slice[i].weight = NR_CTRL_DEFAULT_WEIGHT;
-    st->slice[i].idle_calls = NR_CTRL_SLICE_IDLE_CALLS;
-  }
 }
 
 const char *nr_ctrl_policy_name(int policy)
@@ -143,38 +141,24 @@ void nr_ctrl_account_slice(nr_ctrl_state_t *st, int slice, int rbs)
   st->slice[slice].granted_slots++;
 }
 
-int nr_ctrl_cap_min(int a, int b)
-{
-  if (a <= 0)
-    return b > 0 ? b : 0;
-  if (b <= 0)
-    return a;
-  return a < b ? a : b;
-}
-
 void nr_ctrl_slice_activity(nr_ctrl_state_t *st, const uint8_t backlogged[NR_CTRL_MAX_SLICE])
 {
-  /* lowest deficit among the slices that were already backlogged */
-  double lowest = -1.0;
+  /* deficits are read before any counter is raised, so the result does not depend on the slice order */
+  double deficit[NR_CTRL_MAX_SLICE];
+  for (int i = 0; i < NR_CTRL_MAX_SLICE; i++)
+    deficit[i] = backlogged[i] ? nr_ctrl_slice_deficit(st, i) : 0.0;
   for (int i = 0; i < NR_CTRL_MAX_SLICE; i++) {
-    if (!backlogged[i] || st->slice[i].idle_calls >= NR_CTRL_SLICE_IDLE_CALLS)
+    if (!backlogged[i])
       continue;
-    double d = nr_ctrl_slice_deficit(st, i);
-    if (lowest < 0.0 || d < lowest)
-      lowest = d;
-  }
-  for (int i = 0; i < NR_CTRL_MAX_SLICE; i++) {
-    nr_ctrl_slice_t *sl = &st->slice[i];
-    if (backlogged[i]) {
-      if (sl->idle_calls >= NR_CTRL_SLICE_IDLE_CALLS && lowest >= 0.0) {
-        uint64_t floor_rbs = (uint64_t)(lowest * (double)sl->weight);
-        if (floor_rbs > sl->granted_rbs)
-          sl->granted_rbs = floor_rbs;
-      }
-      sl->idle_calls = 0;
-    } else if (sl->idle_calls < NR_CTRL_SLICE_IDLE_CALLS) {
-      sl->idle_calls++;
-    }
+    double lowest = -1.0; /* lowest deficit among the other backlogged slices */
+    for (int j = 0; j < NR_CTRL_MAX_SLICE; j++)
+      if (j != i && backlogged[j] && (lowest < 0.0 || deficit[j] < lowest))
+        lowest = deficit[j];
+    if (lowest < 0.0)
+      continue; /* alone: nobody to be compared with */
+    double floor_rbs = lowest * (double)st->slice[i].weight - (double)NR_CTRL_SLICE_CREDIT_RBS;
+    if (floor_rbs > (double)st->slice[i].granted_rbs)
+      st->slice[i].granted_rbs = (uint64_t)floor_rbs;
   }
 }
 
