@@ -1265,6 +1265,289 @@ static void test_ue_credit(void)
   CHECK(s2 > 0 && s2 == ue_field(g, "0x1002", "granted_rbs=") + ue_field(g, "0x1003", "granted_rbs="));
 }
 
+/* ------------------------------------------- slices: UEs and sessions that change during a run */
+
+/* The UEs offered to the policy, in this order, with the RNTIs given (a UE that is not in the list is not connected). */
+static void sim_set_ues(const uint16_t *rnti, int n)
+{
+  NR_SCHED_LOCK(&mac.sched_lock);
+  memset(ues, 0, sizeof(ues));
+  memset(mac.UE_info.connected_ue_list, 0, sizeof(mac.UE_info.connected_ue_list));
+  for (int i = 0; i < n; i++) {
+    ues[i].rnti = rnti[i];
+    mac.UE_info.connected_ue_list[i] = &ues[i];
+  }
+  mac.dl_rb_alloc = nr_dl_ctrl_policy;
+  NR_SCHED_UNLOCK(&mac.sched_lock);
+}
+
+/* Resource blocks of new data granted to the UEs of `got[]` over `slots` saturated calls, with a limit on
+ * the first `window` calls reported in early[] (to see a burst). */
+static void dyn_run(int n_ue, const int *skip, int slots, double *got, int window, double *early)
+{
+  for (int s = 0; s < slots; s++) {
+    sim_slot_prepare(n_ue, 1000000);
+    for (int i = 0; i < n_ue; i++) {
+      cands[i].nssai = slice_nssai[i];
+      if (skip && skip[i])
+        cands[i].skipped = true;
+    }
+    sim_slot(n_ue, 4);
+    for (int i = 0; i < n_ue; i++)
+      if (cands[i].scheduled && !cands[i].is_retx) {
+        got[i] += cands[i].sched_pdsch.rbSize;
+        if (early && s < window)
+          early[i] += cands[i].sched_pdsch.rbSize;
+      }
+  }
+}
+
+static void test_slices_dynamic(void)
+{
+  char r[4096], g[8192];
+  double got[40], early[40], tot;
+  const nssai_t none = {.sst = 0, .sd = 0xFFFFFF};
+  const nssai_t s1 = {.sst = 1, .sd = 0xFFFFFF};
+  const nssai_t s2 = {.sst = 2, .sd = 0xFFFFFF};
+
+  /* --- a UE that gets a PDU session during the run moves to the slice of its S-NSSAI, without a burst */
+  sim_setup(4);
+  slice_policy_on();
+  ctl("NSSAIMAP 1 none 1", r, sizeof(r));
+  ctl("NSSAIMAP 2 none 2", r, sizeof(r));
+  slice_nssai[0] = s1;
+  slice_nssai[1] = s2;
+  slice_nssai[2] = none; /* no session yet: slice 0 */
+  slice_nssai[3] = none;
+  memset(got, 0, sizeof(got));
+  dyn_run(4, NULL, 3000, got, 0, NULL);
+  tot = got[0] + got[1] + got[2] + got[3];
+  CHECK(fabs(got[0] / tot - 1.0 / 3.0) < 0.01 && fabs(got[1] / tot - 1.0 / 3.0) < 0.01); /* three slices of equal weight */
+  CHECK(fabs((got[2] + got[3]) / tot - 1.0 / 3.0) < 0.01);
+  slice_nssai[2] = s2; /* UE 1003 gets its session */
+  memset(got, 0, sizeof(got));
+  memset(early, 0, sizeof(early));
+  dyn_run(4, NULL, 3000, got, 40, early);
+  tot = got[0] + got[1] + got[2] + got[3];
+  /* slices: 0 (UE 1004), 1 (UE 1001), 2 (UEs 1002 and 1003) */
+  CHECK(fabs(got[0] / tot - 1.0 / 3.0) < 0.01 && fabs(got[3] / tot - 1.0 / 3.0) < 0.01);
+  CHECK(fabs(got[1] / tot - 1.0 / 6.0) < 0.01 && fabs(got[2] / tot - 1.0 / 6.0) < 0.01);
+  ctl("GET", g, sizeof(g));
+  CHECK(ue_field(g, "0x1003", "slice=") == 2 && ue_source(g, "0x1003") == 2);
+  CHECK(early[2] <= 40.0 * NSLOT_RB / 3.0 + NR_CTRL_UE_CREDIT_RBS + NSLOT_RB); /* no burst at the move */
+
+  /* --- the same UE changes to another S-NSSAI later: it follows, and a rule edit moves the UEs too */
+  slice_nssai[2] = s1;
+  ctl("GET", g, sizeof(g));
+  memset(got, 0, sizeof(got));
+  dyn_run(4, NULL, 1, got, 0, NULL);
+  ctl("GET", g, sizeof(g));
+  CHECK(ue_field(g, "0x1003", "slice=") == 1 && ue_source(g, "0x1003") == 2);
+  ctl("NSSAIMAP 1 none 6", r, sizeof(r)); /* the rule for S-NSSAI 1 now points to slice 6 */
+  ctl("GET", g, sizeof(g));
+  CHECK(ue_field(g, "0x1001", "slice=") == 6 && ue_field(g, "0x1003", "slice=") == 6 && ue_field(g, "0x1002", "slice=") == 2);
+  ctl("NSSAIMAP 1 none -", r, sizeof(r)); /* rule deleted: both UEs fall back to slice 0 */
+  ctl("GET", g, sizeof(g));
+  CHECK(ue_field(g, "0x1001", "slice=") == 0 && ue_source(g, "0x1001") == 0 && ue_field(g, "0x1003", "slice=") == 0);
+
+  /* --- S-NSSAIs that differ only in the slice differentiator are different rules */
+  sim_setup(3);
+  slice_policy_on();
+  ctl("NSSAIMAP 1 none 1", r, sizeof(r));
+  ctl("NSSAIMAP 1 000005 2", r, sizeof(r));
+  ctl("NSSAIMAP 1 0000FF 3", r, sizeof(r));
+  slice_nssai[0] = s1;
+  slice_nssai[1] = (nssai_t){.sst = 1, .sd = 0x000005};
+  slice_nssai[2] = (nssai_t){.sst = 1, .sd = 0x0000FF};
+  memset(got, 0, sizeof(got));
+  dyn_run(3, NULL, 3000, got, 0, NULL);
+  ctl("GET", g, sizeof(g));
+  CHECK(ue_field(g, "0x1001", "slice=") == 1 && ue_field(g, "0x1002", "slice=") == 2 && ue_field(g, "0x1003", "slice=") == 3);
+  ctl("NSSAIMAP 1 000005 7", r, sizeof(r)); /* a rule is replaced, not added */
+  ctl("GET", g, sizeof(g));
+  CHECK(count_of(g, "RULE ") == 3 && ue_field(g, "0x1002", "slice=") == 7);
+  ctl("NSSAIMAP 1 none -", r, sizeof(r)); /* deleting the first rule keeps the others */
+  ctl("GET", g, sizeof(g));
+  CHECK(count_of(g, "RULE ") == 2 && ue_field(g, "0x1001", "slice=") == 0 && ue_field(g, "0x1002", "slice=") == 7 &&
+        ue_field(g, "0x1003", "slice=") == 3);
+
+  /* --- the table holds eight rules; a ninth is refused and nothing changes */
+  slice_policy_on();
+  for (int i = 0; i < NR_CTRL_MAX_RULE; i++) {
+    char c[48];
+    snprintf(c, sizeof(c), "NSSAIMAP %d none %d", 10 + i, i % 8);
+    ctl(c, r, sizeof(r));
+    CHECK(!strncmp(r, "OK", 2));
+  }
+  ctl("NSSAIMAP 99 none 1", r, sizeof(r));
+  CHECK(!strncmp(r, "ERR", 3) && strstr(r, "table_full"));
+  ctl("NSSAIMAP 10 none 5", r, sizeof(r)); /* an existing key can still be changed */
+  CHECK(!strncmp(r, "OK", 2));
+  ctl("GET", g, sizeof(g));
+  CHECK(count_of(g, "RULE ") == NR_CTRL_MAX_RULE);
+
+  /* --- a UE that connects during the run: it is placed by its rule at once and gets no burst */
+  sim_setup(3);
+  slice_policy_on();
+  ctl("NSSAIMAP 1 none 1", r, sizeof(r));
+  slice_nssai[0] = s1;
+  slice_nssai[1] = s1;
+  slice_nssai[2] = none; /* slice 0 */
+  memset(got, 0, sizeof(got));
+  dyn_run(3, NULL, 3000, got, 0, NULL);
+  tot = got[0] + got[1] + got[2];
+  CHECK(fabs(got[2] / tot - 0.5) < 0.01 && fabs(got[0] / tot - 0.25) < 0.01);
+  sim_setup(4); /* UE 1004 connects with S-NSSAI 1 */
+  slice_nssai[3] = s1;
+  memset(got, 0, sizeof(got));
+  memset(early, 0, sizeof(early));
+  dyn_run(4, NULL, 3000, got, 40, early);
+  tot = got[0] + got[1] + got[2] + got[3];
+  CHECK(fabs(got[2] / tot - 0.5) < 0.01); /* slice 0 keeps its half */
+  CHECK(fabs(got[0] / tot - 1.0 / 6.0) < 0.01 && fabs(got[3] / tot - 1.0 / 6.0) < 0.01);
+  CHECK(early[3] <= 40.0 * NSLOT_RB / 6.0 + NR_CTRL_UE_CREDIT_RBS + NSLOT_RB);
+  ctl("GET", g, sizeof(g));
+  CHECK(ue_field(g, "0x1004", "slice=") == 1 && ue_source(g, "0x1004") == 2);
+
+  /* --- a UE that leaves loses its association, its weight and its cap; it comes back as a new UE */
+  ctl("ASSOC 1004 5", r, sizeof(r));
+  ctl("WEIGHT 1004 3000", r, sizeof(r));
+  ctl("CAP 1004 20", r, sizeof(r));
+  {
+    uint16_t three[3] = {0x1001, 0x1002, 0x1003};
+    sim_set_ues(three, 3);
+    memset(got, 0, sizeof(got));
+    dyn_run(3, NULL, 600, got, 0, NULL); /* more than the 256 calls between two prunes */
+    uint16_t four[4] = {0x1001, 0x1002, 0x1003, 0x1004};
+    sim_set_ues(four, 4);
+    ctl("GET", g, sizeof(g));
+    CHECK(ue_field(g, "0x1004", "slice=") == 0 && ue_source(g, "0x1004") == 0);
+    CHECK(ue_field(g, "0x1004", "weight=") == NR_CTRL_DEFAULT_WEIGHT && ue_field(g, "0x1004", "cap=") == 0);
+    CHECK(ue_field(g, "0x1004", "granted_rbs=") == 0);
+  }
+
+  /* --- random churn against a model of the membership: UEs come and go, sessions and rules change.
+   * Checked in every call: the grants fit the slot, the number of UEs and the slice cap; at the end the
+   * resource blocks of every slice equal what the model attributes to it. */
+  {
+    enum { N = 6, KEYS = 4 };
+    const nssai_t keys[KEYS] = {{.sst = 0, .sd = 0xFFFFFF}, {.sst = 1, .sd = 0xFFFFFF}, {.sst = 2, .sd = 0xFFFFFF}, {.sst = 1, .sd = 5}};
+    uint16_t id[N];
+    int present[N], absent_for[N], data[N], key_of[N], assoc[N];
+    int rule[KEYS], scap[NR_CTRL_MAX_SLICE];
+    double tally[NR_CTRL_MAX_SLICE];
+    uint32_t rng = 12345;
+#define RND(m) ((int)((rng = rng * 1664525u + 1013904223u) >> 8) % (m))
+    for (int i = 0; i < N; i++) {
+      id[i] = (uint16_t)(0x2001 + i);
+      present[i] = i < 4;
+      absent_for[i] = 0;
+      data[i] = 1;
+      key_of[i] = 1 + i % 3;
+      assoc[i] = -1;
+    }
+    for (int k = 0; k < KEYS; k++)
+      rule[k] = -1;
+    for (int k = 0; k < NR_CTRL_MAX_SLICE; k++) {
+      scap[k] = 0;
+      tally[k] = 0;
+    }
+    slice_policy_on();
+    int bad_fit = 0, bad_cap = 0, bad_slice = 0, bad_cmd = 0;
+    for (int slot = 0; slot < 30000; slot++) {
+      char c[64];
+      int x = RND(1000);
+      int u = RND(N), k = RND(KEYS), sl = RND(NR_CTRL_MAX_SLICE);
+      if (x < 20) {
+        data[u] = !data[u];
+      } else if (x < 30 && present[u]) {
+        key_of[u] = k; /* the UE's first bearer now has another S-NSSAI */
+      } else if (x < 36) {
+        if (rule[k] >= 0 && RND(3) == 0) {
+          snprintf(c, sizeof(c), "NSSAIMAP %d %s -", keys[k].sst, keys[k].sd == 0xFFFFFF ? "none" : "000005");
+          rule[k] = -1;
+        } else {
+          snprintf(c, sizeof(c), "NSSAIMAP %d %s %d", keys[k].sst, keys[k].sd == 0xFFFFFF ? "none" : "000005", sl);
+          rule[k] = sl;
+        }
+        bad_cmd += (ctl(c, r, sizeof(r)) < 0 || strncmp(r, "OK", 2) != 0);
+      } else if (x < 42 && present[u]) {
+        if (RND(3) == 0) {
+          snprintf(c, sizeof(c), "ASSOC %x -", id[u]);
+          assoc[u] = -1;
+        } else {
+          snprintf(c, sizeof(c), "ASSOC %x %d", id[u], sl);
+          assoc[u] = sl;
+        }
+        bad_cmd += (ctl(c, r, sizeof(r)) < 0 || strncmp(r, "OK", 2) != 0);
+      } else if (x < 46) {
+        static const int caps[4] = {0, 20, 30, 40};
+        int cp = caps[RND(4)];
+        snprintf(c, sizeof(c), "SLICE %d CAP %d", sl, cp);
+        scap[sl] = cp;
+        bad_cmd += (ctl(c, r, sizeof(r)) < 0 || strncmp(r, "OK", 2) != 0);
+      } else if (x < 50) {
+        snprintf(c, sizeof(c), "SLICE %d WEIGHT %d", sl, 1000 * (1 + RND(3)));
+        bad_cmd += (ctl(c, r, sizeof(r)) < 0 || strncmp(r, "OK", 2) != 0);
+      } else if (x < 52) {
+        if (present[u]) { /* the UE leaves: its state is dropped at the next prune */
+          present[u] = 0;
+          absent_for[u] = 300 + RND(100);
+          assoc[u] = -1;
+        }
+      }
+      for (int i = 0; i < N; i++)
+        if (!present[i] && absent_for[i] > 0 && --absent_for[i] == 0)
+          present[i] = 1; /* it comes back as a new UE after more than one prune period */
+
+      uint16_t rn[N];
+      int idx[N], n = 0;
+      for (int i = 0; i < N; i++)
+        if (present[i]) {
+          rn[n] = id[i];
+          idx[n++] = i;
+        }
+      sim_set_ues(rn, n);
+      sim_slot_prepare(n, 1000000);
+      int model_slice[N];
+      for (int j = 0; j < n; j++) {
+        int i = idx[j];
+        cands[j].nssai = keys[key_of[i]];
+        if (!data[i])
+          cands[j].skipped = true;
+        model_slice[j] = assoc[i] >= 0 ? assoc[i] : (rule[key_of[i]] >= 0 ? rule[key_of[i]] : 0);
+      }
+      sim_slot(n, 4);
+      int used = 0, nsched = 0;
+      double per_slice[NR_CTRL_MAX_SLICE] = {0};
+      for (int j = 0; j < n; j++)
+        if (cands[j].scheduled && !cands[j].is_retx) {
+          int rb = cands[j].sched_pdsch.rbSize;
+          used += rb;
+          nsched++;
+          per_slice[model_slice[j]] += rb;
+          tally[model_slice[j]] += rb;
+          if (!data[idx[j]])
+            bad_slice++; /* a UE without data was granted */
+        }
+      bad_fit += (used > NSLOT_RB || nsched > 4);
+      for (int q = 0; q < NR_CTRL_MAX_SLICE; q++)
+        bad_cap += (scap[q] > 0 && per_slice[q] > scap[q]);
+    }
+    CHECK(bad_cmd == 0);
+    CHECK(bad_fit == 0);
+    CHECK(bad_cap == 0);
+    CHECK(bad_slice == 0);
+    ctl("GET", g, sizeof(g));
+    for (int q = 0; q < NR_CTRL_MAX_SLICE; q++) {
+      long v = slice_field(g, q, "granted_rbs=");
+      CHECK((v < 0 ? 0.0 : (double)v) == tally[q]); /* the policy and the model agree on every slice */
+    }
+#undef RND
+  }
+  sim_setup(2);
+}
+
 int main(void)
 {
   test_split_examples();
@@ -1276,6 +1559,7 @@ int main(void)
   test_slices();
   test_slices_e2();
   test_ue_credit();
+  test_slices_dynamic();
   test_second_instance();
   test_many_ues();
   test_concurrency();
