@@ -240,7 +240,8 @@ Expect about 25 % for each UE, `U4` included. The counters of `U4` stay far belo
 count real grants.
 
 **Run 9, two S-NSSAIs in the core.** Needs a reservation with `second_slice` on. It was run with two UEs:
-`U1` attaches with SST 1 and `U2` with SST 2 (with four UEs, UEs 1 and 2 have SST 1 and UEs 3 and 4 SST 2).
+`U1` attaches with SST 1 and `U2` with SST 2; with four UEs, UEs 1 and 2 have SST 1 and UEs 3 and 4 SST 2
+(`dl.sh q9` then takes all four addresses, and the expected shares are 37.5 / 37.5 / 12.5 / 12.5 %).
 
 First check the attachment: both UEs must have a tunnel address (`ip -4 addr show oaitun_ue1` in the UE
 container) and answer a ping through it. If one does not, the core did not accept the second slice: look at
@@ -263,7 +264,7 @@ weight 1000, like slice 2). Restoring the rule (`nssai-map 2 none 2`) moves `U2`
 
 **Run 10, credit of two UEs that return together.** Policy `wrr`; `U1` and `U2` receive 15 Mbit/s for
 100 s, `U3` and `U4` start after 60 s. Before the credit bound compared against the furthest-ahead UE, the two
-late UEs took about 85 % of the cell for a long time. Not run yet.
+late UEs took about 85 % of the cell for a long time.
 ```bash
 ~/x.sh policy wrr
 DUR=100 ~/dl.sh q10a $IP1 $IP2
@@ -281,28 +282,34 @@ sleep 62; python3 bin/sched-ctl.py measure --seconds 20; python3 bin/sched-ctl.p
 Expect about 25 % for each UE.
 
 **Run 11, standard slice message.** The stock slice xApp of FlexRIC sends an ADD, a DEL and an association
-and reads the indication. Not run yet. On the core node:
+and reads the indication. On the core node:
 ```bash
 ~/x.sh policy slice
 X=$(find /opt/oai-src -name xapp_slice_moni_ctrl -type f | head -1); echo $X
 $X
 ```
 On cell1, in a second terminal, before starting the xApp: `sudo docker logs -f ric5g-gnb-cell1 2>&1 | grep --line-buffered "SLICE CONTROL"`.
+The handler flushes each of these lines; an image built before that change keeps them in the block buffer
+of the container's output, and `status` with the version counter is then the only check.
 Expect in the gNB log:
 - `SLICE CONTROL ADD refused: static slice width must be 5..275 resource blocks, slice (0)`: the example's slices are 4, 4 and 5 resource blocks wide, so the whole message is refused and nothing changes;
 - `SLICE CONTROL DEL applied (1 commands)` (slice 2);
 - `SLICE CONTROL ASSOC applied (1 commands)`: the xApp takes the RNTI of the first UE from the indication, which now holds the real table, and puts it in slice 5.
 
-Then `python3 bin/sched-ctl.py status` on cell1 shows that UE in slice 5 `via rnti`. A valid ADD is covered by
-the host tests only, because the stock example cannot send one.
+Then `python3 bin/sched-ctl.py status` on cell1 shows that UE in slice 5 `via rnti`, and the version has
+gone up by one for the policy, one for the DEL and one for the association (the refused ADD does not change it).
+A valid ADD is covered by the host tests only, because the stock example cannot send one.
 
 At the end of the reservation: `~/x.sh reset`.
 
 ## 4. Results
 
-Image `ghinwa555/oai-gnb-ctrl:70508eba-31ef394cea46`, single cell, RFsim, AWGN, 20 s windows; runs 0 to 8
-with four UEs with SST 1 and no SD, run 9 with two UEs (SST 1 and SST 2). In every window the version was the
-same at both ends and every UE received traffic.
+Single cell, RFsim, AWGN, 20 s windows. Runs 0 to 8 used the image `...:70508eba-31ef394cea46` with four UEs
+with SST 1 and no SD, and run 9 with two UEs (SST 1 and SST 2). The credit bound was changed afterwards (it now
+refers to the furthest-ahead other slice or UE instead of the furthest-behind); runs 9 (four UEs), 10 and 11
+used `...:70508eba-dc6cb0734c96`, which has the new bound. Runs 0 to 9 with two UEs were not repeated with it,
+apart from the checks in run 9 (four UEs). In every window the version was the same at both ends and every UE
+received traffic.
 
 | Run | Setup | Expected | Measured |
 | --- | --- | --- | --- |
@@ -316,6 +323,9 @@ same at both ends and every UE received traffic.
 | 9 | two UEs, SST 1 and SST 2, rules to slices 1 and 2, weights 3000 : 1000 | 75 : 25 | **74.7 : 25.3**; `nssai 1:ffffff` and `2:ffffff`, both `via nssai`; 17.47 and 6.62 Mbit/s |
 | 9 | rule for SST 2 deleted during traffic | `U2` in slice 0 `via default`, 75 : 25 | `U2` slice 0 `via default`, `nssai 2:ffffff` kept, version 7 to 8; windows 66.7 : 33.3, then 74.7 : 25.3 |
 | 9 | rule restored | `U2` in slice 2, 75 : 25 | **72.2 : 27.8** |
+| 9 | four UEs, UEs 1 and 2 SST 1, UEs 3 and 4 SST 2, rules to slices 1 and 2, weights 3000 : 1000 | 75 : 25; 37.5 / 37.5 / 12.5 / 12.5 | **75.0 : 25.0**; **37.5 / 37.5 / 12.5 / 12.5** %; all `via nssai` with `nssai 1:ffffff` and `2:ffffff`; version 13 at both ends; slice counters equal the sums of their UEs (325,962 = 163,007 + 162,955; 110,273 = 55,114 + 55,159) |
+| 10 | `wrr`, `U3` and `U4` start after 60 s | 25 % each | **25.0 %** each (92,724 / 92,705 / 92,724 / 92,677 RBs in the window); version 2 at both ends; the late UEs ended at about 230,000 granted RBs, the others at about 834,000 |
+| 11 | stock slice xApp, policy `slice` | ADD refused, DEL and ASSOC applied, indication received | version 2 to 6 (reset, policy, DEL, ASSOC; the refused ADD changed nothing); one UE in slice 5 `via rnti`, the others in slice 0 `via default`; about 26 indications received, the xApp stopped cleanly |
 
 Runs 0 to 8 are within 0.4 point of the target (run 0 is the stock policy). In runs 7, 4, 5, 1 and 6
 the sum of the grant counters of the UEs equals the sum of the slice counters. The `granted_rbs`
@@ -331,6 +341,12 @@ it was not checked.
 
 Limits: one 20 s window per run; the total throughput of a run varies by about 10 % at the same
 resource-block rate, so judge by the resource-block shares; RFsim with the same channel for all UEs.
-Not tested on the cell: a valid standard ADD message, a UE that attaches or reconnects with a new RNTI during a run (run 8
-covers a UE that starts sending late; the host tests cover the new RNTI), more than one UE per
-S-NSSAI in the core (run 9 had one), and the standard FlexRIC slice message.
+Run 10 was measured with the new credit bound only; the old bound was not run on the cell, so its 85 % is a
+host-test figure. In run 11 the log lines of the handler did not appear in `docker logs` because the container
+buffers the output of the gNB (see `DEPLOYMENT.md`); the refusal of the ADD and the effect of the DEL and the
+association are therefore shown by the version counter and by `status` only. The flush added to the handler
+afterwards has not been run on the cell.
+
+Not tested on the cell: a valid standard ADD message (the stock example sends slices that are refused, so ADD is
+covered by the host tests only), and a UE that attaches or reconnects with a new RNTI during a run (run 8 and
+run 10 cover UEs that start sending late; the host tests cover the new RNTI).

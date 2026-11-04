@@ -115,7 +115,8 @@ replaces the handler that only printed the message; the translation is in
 A message is checked completely before its first command is sent, so one invalid slice
 changes nothing. Refused: other algorithms (NVS rate, SCN19, EDF), uplink slices, ids above 7,
 a static width outside 5 to 275, more than 8 slices or 32 UEs in one message. The reason is
-written to the gNB log (`[E2 Agent]: SLICE CONTROL ...`); as for the MAC messages, the
+written to the gNB log (`[E2 Agent]: SLICE CONTROL ...`, flushed at once; before that change the container kept
+the lines in its output buffer, so `status` and the version counter are the reliable check); as for the MAC messages, the
 acknowledgement to the xApp only says that the gNB received the message. An association is
 applied UE by UE and stops at the first one the endpoint refuses (an unknown RNTI), which the
 log names. The stock slice example of FlexRIC sends static slices of 4, 4 and 5 resource
@@ -281,7 +282,7 @@ Not done yet, and required before relying on it:
 - Building the gNB image (the stand-in headers in `gnb/test/oai_stub` are transcribed from the pinned source; the real compile happens in the image build).
 - Longer and repeated runs, other channel conditions and more than four UEs: the live results above come from three reservations, with two and four UEs, AWGN. Single runs of 20 s were used for most four-UE rows.
 - The E2 path is confirmed on one reservation: policy, weight, cap and reset sent by `xapp_sched_ctrl` through the RIC were applied by the gNB (read back with `sched-ctl.py status`), a command for an unknown RNTI was refused by the gNB while the xApp still reported it as delivered, and an invalid word was rejected by the xApp. It has not been tried with several gNBs or with the E42 subscription load of the monitoring xApps running at the same time.
-- Slice scheduling (policy `slice`, associations, S-NSSAI rules): measured on a live gNB with four UEs (`SLICING_LIVE_TEST.md`, section 4), including the bounded credit of slices and UEs and the slice-level cap. A UE that attaches with a new RNTI during a run was not tested on the cell, and whether two different S-NSSAIs work with the minimal core is not verified. The standard FlexRIC slice message is mapped (section below); it was tested on the host only.
+- Slice scheduling (policy `slice`, associations, S-NSSAI rules): measured on a live gNB with four UEs (`SLICING_LIVE_TEST.md`, section 4), including the bounded credit of slices and UEs and the slice-level cap. A UE that attaches with a new RNTI during a run was not tested on the cell. The standard FlexRIC slice message is mapped (section below): the stock slice xApp was run against a gNB (its ADD refused, DEL and association applied, indication received); a valid ADD was tested on the host only.
 - Uplink scheduling is not controlled. Handovers and multi-cell coordination are outside scope.
 
 The sources are compiled into the OAI gNB and keep the gNB's licensing in mind

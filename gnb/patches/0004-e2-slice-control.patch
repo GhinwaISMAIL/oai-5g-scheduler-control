@@ -1,8 +1,8 @@
 diff --git a/openair2/E2AP/RAN_FUNCTION/CUSTOMIZED/ran_func_slice.c b/openair2/E2AP/RAN_FUNCTION/CUSTOMIZED/ran_func_slice.c
-index 58a39a4..8cdb196 100644
+index 58a39a4..3f05133 100644
 --- a/openair2/E2AP/RAN_FUNCTION/CUSTOMIZED/ran_func_slice.c
 +++ b/openair2/E2AP/RAN_FUNCTION/CUSTOMIZED/ran_func_slice.c
-@@ -1,53 +1,165 @@
+@@ -1,53 +1,169 @@
  /*
   * SPDX-License-Identifier: LicenseRef-CSSL-1.0
   */
@@ -40,6 +40,7 @@ index 58a39a4..8cdb196 100644
 +           what, plan->text[refused], reply[0] ? reply : "no answer from the scheduler control endpoint", done, plan->n);
 +  else
 +    printf("[E2 Agent]: SLICE CONTROL %s applied (%d commands)\n", what, done);
++  fflush(stdout); /* stdout is a pipe in a container: without it the line appears minutes later */
 +}
 +
 +static char* copy_name(const char* s, uint32_t* len)
@@ -164,13 +165,16 @@ index 58a39a4..8cdb196 100644
    } else {
 -    assert(0!=0 && "Unknown msg_type!");
 +    printf("[E2 Agent]: SLICE CONTROL ignored: unknown message type %d\n", (int)msg->type);
-   }
- 
++    fflush(stdout);
++  }
++
 +  if (rc == 0)
 +    run_plan(what, &plan);
-+  else if (err[0])
++  else if (err[0]) {
 +    printf("[E2 Agent]: SLICE CONTROL %s refused: %s\n", what, err);
-+
++    fflush(stdout);
+   }
+ 
    sm_ag_if_ans_t ans = {.type = CTRL_OUTCOME_SM_AG_IF_ANS_V0};
    ans.ctrl_out.type = SLICE_AGENT_IF_CTRL_ANS_V0;
    return ans;

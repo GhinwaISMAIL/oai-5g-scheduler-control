@@ -168,7 +168,9 @@ C. Standard FlexRIC slice message: `gnb/patches/0004-e2-slice-control.patch` rep
    STATIC width as cap), DEL (new command `SLICEDEL`) and UE association to the commands above and checks a
    whole message before sending anything; the indication reports the real slices and UEs instead of random
    data. Tested on the host with the real command parser and the handler under AddressSanitizer
-   (`SCHEDULER_CONTROL.md`, section on the standard slice service model). Not yet run on a reservation.
+   (`SCHEDULER_CONTROL.md`, section on the standard slice service model). Run on a reservation with the stock slice
+xApp: the ADD was refused as expected (its static slices are 4 and 5 resource blocks wide), DEL and association
+were applied and the indication was received (`SLICING_LIVE_TEST.md`, run 11). A valid ADD has not been sent to a gNB.
 
 ## Decisions to confirm
 
