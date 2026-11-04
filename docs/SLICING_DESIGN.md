@@ -4,9 +4,10 @@ Status: step A (below) is implemented and tested on the host, on branch `slicing
 version was run on a live gNB with four UEs (`SLICING_LIVE_TEST.md`, section 5); it showed two
 points that this document now reflects: the credit of a slice is bounded (policy item 5) and the
 slice cap limits the slice as a whole (policy item 4). The revised version was run live with the
-expected shares (`SLICING_LIVE_TEST.md`, section 6). Open: the credit of a single UE is not bounded
-(a new or reconnected UE is served first in its slice until it has caught up). Steps B and C are
-not started.
+expected shares (`SLICING_LIVE_TEST.md`, section 6). That run also showed that a UE that reconnects
+was served first in its slice for minutes; the credit of a UE is now bounded in the same way
+(policy item 6) and the credit is kept apart from the grant counters. This last change is tested
+on the host; its live run is prepared (`SLICING_LIVE_TEST.md`, run 8). Steps B and C are not started.
 
 ## Goal
 
@@ -68,6 +69,13 @@ the largest free block) and changes only the order and the accounting:
    caught up: in the first live run this gave a slice of weight 1000 about 75 % of the cell against
    another of weight 1000 for the whole run. The first version only acted after 500 consecutive
    calls without data, which a slice with sparse data never reaches.
+6. The same bound applies to a UE: a UE with new data is raised so that its deficit is at most
+   `NR_CTRL_UE_CREDIT_RBS` (2000 resource blocks, in units of its own weight) below the lowest
+   deficit of the other UEs with new data in its slice (in all UEs for `wrr`). A UE that attaches,
+   or reconnects with a new RNTI, therefore gets a burst of at most that size and then its weight.
+   Credit is virtual: it is stored apart from the granted resource blocks, and only the order of
+   visit uses it. The counters that `status` and `measure` show, for UEs and for slices, are real
+   grants, and the counter of a slice equals the sum of the counters of its UEs.
 
 Consequences, stated before they are measured:
 
@@ -123,6 +131,8 @@ Host side, in `gnb/test/test_ctrl.c` and `tests/`:
 - Inside a slice the split follows the UE weights.
 - Credit: a slice that returns after a long idle period, or that had data in only one call out of 20,
   gets a burst of at most the credit and then its weight; with equal and with unequal weights.
+  The same for a UE that joins late, in `wrr` and inside a slice, with equal and unequal weights;
+  a late UE does not disturb the other slice; the slice counter equals the sum of its UE counters.
 - Caps: the slice cap limits the slice in total per slot; the UE cap works inside it; a remainder below
   the minimum grant is not used; without a slice cap the first UE takes the slot as before.
 - Membership: precedence of `ASSOC` over `NSSAIMAP` over slice 0; a disconnecting UE loses its association; a rule survives.
@@ -159,6 +169,6 @@ C. Standard FlexRIC slice message: a handler in `ran_func_slice.c` that maps sli
 2. Inside-slice policy fixed to weighted round robin by UE weight.
 3. Slice cap as the total of the slice per slot (revised: the first version limited each UE of the
    slice separately, so a slice with n UEs could take n times the cap).
-4. Bounded credit of 2000 resource blocks (item 5 of the policy; revised: the first version had an
-   idle rule of 500 calls).
+4. Bounded credit of 2000 resource blocks, for slices and for UEs (items 5 and 6 of the policy;
+   revised: the first version had an idle rule of 500 calls and no bound for UEs).
 5. A guaranteed minimum share per slice is not part of this step.

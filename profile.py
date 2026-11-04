@@ -42,7 +42,7 @@ pc.defineParameter("gnb_ctrl_image",
                    "Pre-built controllable gNB image to pull instead of building it on the cell node "
                    "(the tag ends with a hash of gnb/src and gnb/patches; empty = build on the node, "
                    "about 25 minutes; if the pull fails the node builds it)",
-                   portal.ParameterType.STRING, "ghinwa555/oai-gnb-ctrl:70508eba-e4382b42bb15")
+                   portal.ParameterType.STRING, "ghinwa555/oai-gnb-ctrl:70508eba-31ef394cea46")
 
 params = pc.bindParameters()
 

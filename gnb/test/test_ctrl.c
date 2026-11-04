@@ -1202,6 +1202,69 @@ static void test_concurrency(void)
   pthread_join(th, NULL);
 }
 
+/* A UE that joins late (or reconnects) enters at the level of its peers, less the credit bound, in
+ * wrr and inside a slice: it does not take every slot until its counter has caught up. */
+static void test_ue_credit(void)
+{
+  char r[4096];
+  double got[40];
+  const char *policy[] = {"POLICY wrr", "POLICY slice"};
+  for (int m = 0; m < 2; m++) {
+    sim_setup(3);
+    memset(slice_nssai, 0, sizeof(slice_nssai));
+    ctl("RESET", r, sizeof(r));
+    ctl(policy[m], r, sizeof(r));
+    int late[3] = {0, 0, 1}; /* the third UE has not attached yet */
+    memset(got, 0, sizeof(got));
+    slice_run(3, late, 3000, got);
+    CHECK(got[2] == 0.0 && fabs(got[0] - got[1]) / (got[0] + got[1]) < 0.01);
+    memset(got, 0, sizeof(got));
+    slice_run(3, NULL, 600, got);
+    double tot = got[0] + got[1] + got[2];
+    CHECK(tot == 600.0 * NSLOT_RB);
+    CHECK(got[2] > tot / 3.0); /* it does get a burst ... */
+    CHECK(got[2] - tot / 3.0 <= NR_CTRL_UE_CREDIT_RBS + 2.0 * NSLOT_RB); /* ... of the size of the credit, not of its whole lag */
+    memset(got, 0, sizeof(got));
+    slice_run(3, NULL, 3000, got);
+    tot = got[0] + got[1] + got[2];
+    CHECK(fabs(got[2] / tot - 1.0 / 3.0) < 0.01 && fabs(got[0] / tot - 1.0 / 3.0) < 0.01);
+  }
+
+  /* weights: a late UE of weight 3000 against two of 1000 settles at 3/5 after its burst */
+  sim_setup(3);
+  ctl("RESET", r, sizeof(r));
+  ctl("POLICY wrr", r, sizeof(r));
+  ctl("WEIGHT 1003 3000", r, sizeof(r));
+  int late[3] = {0, 0, 1};
+  memset(got, 0, sizeof(got));
+  slice_run(3, late, 3000, got);
+  memset(got, 0, sizeof(got));
+  slice_run(3, NULL, 4000, got);
+  double tot = got[0] + got[1] + got[2];
+  CHECK(fabs(got[2] / tot - 0.6) < 0.02);
+
+  /* within a slice only: UEs of other slices are not compared with it */
+  sim_setup(3);
+  memset(slice_nssai, 0, sizeof(slice_nssai));
+  slice_policy_on();
+  ctl("ASSOC 1001 1", r, sizeof(r));
+  ctl("ASSOC 1002 2", r, sizeof(r));
+  ctl("ASSOC 1003 2", r, sizeof(r));
+  int late2[3] = {0, 0, 1}; /* UE 1003 joins slice 2 late */
+  memset(got, 0, sizeof(got));
+  slice_run(3, late2, 3000, got);
+  memset(got, 0, sizeof(got));
+  slice_run(3, NULL, 3000, got);
+  tot = got[0] + got[1] + got[2];
+  CHECK(fabs((got[1] + got[2]) / tot - 0.5) < 0.01); /* the slices stay at their weights */
+  CHECK(fabs(got[1] / got[2] - 1.0) < 0.1);          /* and the two UEs of slice 2 split it */
+  /* the counters in status are real grants: the credit is kept apart, so a slice equals the sum of its UEs */
+  char g[8192];
+  ctl("GET", g, sizeof(g));
+  long s2 = slice_field(g, 2, "granted_rbs=");
+  CHECK(s2 > 0 && s2 == ue_field(g, "0x1002", "granted_rbs=") + ue_field(g, "0x1003", "granted_rbs="));
+}
+
 int main(void)
 {
   test_split_examples();
@@ -1212,6 +1275,7 @@ int main(void)
   test_e2();
   test_slices();
   test_slices_e2();
+  test_ue_credit();
   test_second_instance();
   test_many_ues();
   test_concurrency();

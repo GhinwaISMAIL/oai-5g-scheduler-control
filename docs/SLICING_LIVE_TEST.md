@@ -305,6 +305,40 @@ window taken showed slice 1 at 21.9 % of the resource blocks for 1.12 Mbit/s (ex
 the window probably fell into the ramp-up of the traffic, total 7.58 Mbit/s), so that premise is not
 confirmed by a measurement; the counters afterwards show it (see section 6).
 
+### Run 8: a UE that starts sending late (regression of the UE-level credit)
+
+Policy `wrr`, all four UEs with the default weight. `U1`, `U2` and `U3` receive 15 Mbit/s for 75 s;
+`U4` receives nothing for the first 60 s and then 15 Mbit/s. Its grant counter is then about
+60 s x 18,900 resource blocks per second / 3 = 380,000 behind the others. The image of section 6
+(no bound on the credit of a UE) serves `U4` in nearly every slot until that gap is closed, about
+20 s; the image of section 7 gives it a burst of at most 2000 resource blocks and then its share.
+
+```bash
+while sudo docker exec ric5g-oai-ext-dn pgrep iperf3 > /dev/null; do echo "previous run still draining"; sleep 10; done
+sleep 30
+~/x.sh reset
+~/x.sh policy wrr
+~/dl.sh q8a $IP1 $IP2 $IP3
+~/chk.sh q8a
+echo "=== phase 1 started: waiting 60 s ==="
+sleep 60
+DUR=60 ~/dl.sh q8b $IP4
+~/chk.sh q8b
+echo "=== U4 STARTED: paste the cell1 block now (it measures from 5 s after the start of U4) ==="
+```
+
+On cell1, at the moment the last line appears on the core:
+
+```bash
+sleep 5; python3 bin/sched-ctl.py measure --seconds 20
+```
+
+Expect, in the 20 s window: `U4` about 25 % of the resource blocks (within 3 points), the other
+three about 25 % each. The grant counters in `status` of `U4` stay far below those of the others;
+that is correct, they count real grants. With an unbounded credit `U4` would read 50 % or more in
+this window. If the iperf3 client of `U4` finishes before the window ends, the window is invalid
+(use `DUR=75`).
+
 ### After the runs
 
 ```bash
@@ -319,7 +353,7 @@ Paste the cell-block outputs of all runs. A run is valid only when the version o
 It tests the policy, the commands over E2 and the read-back on a live gNB, with membership by
 RNTI and the S-NSSAI the MAC reports. It does not test two different S-NSSAIs in the core
 (configuration of the gNB, AMF, SMF, UPF, subscribers and UEs), the standard FlexRIC slice
-message, throughput guarantees, or a UE that attaches or reconnects during a run (section 6). Results of the earlier policies show that the total
+message, throughput guarantees, or a UE that attaches or reconnects during a run (run 8 covers a UE that starts sending late, not a new attachment). Results of the earlier policies show that the total
 throughput of a run varies by about ±10 % at the same resource-block rate, so judge by the
 resource-block shares.
 
@@ -378,8 +412,9 @@ Open points:
   procedure now restarts the servers and `chk.sh` shows the failure at once.
 - The queues of the previous run keep the cell busy for minutes (about 220 s after a 75 s run),
   so every run starts with data in the buffers. Some values in `status` therefore include grants
-  made before the run's commands: use the per-UE counters and the `measure` lines, not the slice
-  counters, which also contain the credit rule's adjustments and are not a count of grants.
+  made before the run's commands: use the per-UE counters and the `measure` lines. (With the
+  image of section 7 the slice counters are real grants too; on the image of section 6 they also
+  contain the credit rule's adjustments and are not a count of grants.)
 
 ## 6. Results on the revised image
 
@@ -407,7 +442,7 @@ RNTI and by the S-NSSAI the MAC reports (rule, and association over rule), and t
 credit of a slice, all on a live single-cell gNB with four UEs. The slice shares were within
 0.2 point of the target in eight of the nine valid windows and 1.0 point off in one (run 1).
 
-**A finding that is not corrected yet: the credit of a single UE is not bounded.** Between runs 6
+**A finding, corrected in the image of section 7: the credit of a single UE was not bounded.** Between runs 6
 and 6b the UE of `ric5g-ue-cell1-2` re-established its connection without a container restart (same
 address, new RNTI: `0x8d99` became `0x874e`). A new UE starts with a grant counter of 0 while its
 peers were at about 1.2 million resource blocks, so inside its slice it was served first until it
@@ -415,7 +450,7 @@ had caught up: 36.4 % and 41.3 % of the cell in two consecutive windows, against
 4.9 % for its peers. The gap closed within the third window. The slice split was not affected. The
 same holds for `wrr`, whose counters have the same property, and for any UE that attaches during a
 run. The remedy is the same as for slices (a UE that becomes backlogged enters at the level of
-its backlogged peers, less a small allowance); it needs a change in `gnb/src` and a new image.
+its backlogged peers, less a bounded allowance); see section 7.
 Also seen in these windows and not explained: `0xf85a` received 0.05 Mbit/s with 18,414 resource
 blocks in the 6c window, and `0x874e` 0.46 Mbit/s with 137,321 resource blocks in the 6b window.
 
@@ -427,3 +462,12 @@ Other points:
   all earlier runs.
 - Four minutes after the last run, two UEs were still receiving about 1.8 MB per probe interval:
   the queues of a 75 s run at 15 Mbit/s per UE take minutes to drain.
+
+## 7. Image with bounded credit for UEs
+
+Image `ghinwa555/oai-gnb-ctrl:70508eba-31ef394cea46`: the credit of a UE is bounded at 2000
+resource blocks against the other UEs with data in its slice (all UEs for `wrr`), and the credit is
+kept apart from the grant counters, so `granted_rbs` of UEs and slices are real grants. Tested on the
+host (`gnb/test`: 203,446 checks, address and thread sanitizers, strict C11, and the compile with
+the OAI flags). The live runs below are to be done and their results added here: run 8, then
+repeats of runs 7, 5, 1 and 6c to show that nothing else changed.

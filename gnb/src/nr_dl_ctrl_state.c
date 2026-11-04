@@ -78,7 +78,7 @@ int nr_ctrl_cap_of(const nr_ctrl_state_t *st, uint16_t rnti)
 double nr_ctrl_deficit(const nr_ctrl_state_t *st, uint16_t rnti)
 {
   const nr_ctrl_ue_t *u = find_ue(st, rnti);
-  uint64_t granted = u ? u->granted_rbs : 0;
+  uint64_t granted = u ? u->granted_rbs + u->credit_rbs : 0;
   return (double)granted / (double)nr_ctrl_weight_of(st, rnti);
 }
 
@@ -125,7 +125,7 @@ double nr_ctrl_slice_deficit(const nr_ctrl_state_t *st, int slice)
 {
   if (slice < 0 || slice >= NR_CTRL_MAX_SLICE)
     return 0.0;
-  return (double)st->slice[slice].granted_rbs / (double)st->slice[slice].weight;
+  return (double)(st->slice[slice].granted_rbs + st->slice[slice].credit_rbs) / (double)st->slice[slice].weight;
 }
 
 int nr_ctrl_slice_cap(const nr_ctrl_state_t *st, int slice)
@@ -156,9 +156,36 @@ void nr_ctrl_slice_activity(nr_ctrl_state_t *st, const uint8_t backlogged[NR_CTR
         lowest = deficit[j];
     if (lowest < 0.0)
       continue; /* alone: nobody to be compared with */
-    double floor_rbs = lowest * (double)st->slice[i].weight - (double)NR_CTRL_SLICE_CREDIT_RBS;
-    if (floor_rbs > (double)st->slice[i].granted_rbs)
-      st->slice[i].granted_rbs = (uint64_t)floor_rbs;
+    nr_ctrl_slice_t *sl = &st->slice[i];
+    double floor_rbs = lowest * (double)sl->weight - (double)NR_CTRL_SLICE_CREDIT_RBS;
+    double have = (double)(sl->granted_rbs + sl->credit_rbs);
+    if (floor_rbs > have)
+      sl->credit_rbs += (uint64_t)(floor_rbs - have);
+  }
+}
+
+void nr_ctrl_ue_activity(nr_ctrl_state_t *st, const uint16_t *rnti, const uint8_t *group, int n)
+{
+  if (n > NR_CTRL_MAX_UE)
+    n = NR_CTRL_MAX_UE;
+  /* deficits are read before any credit is raised, so the result does not depend on the order */
+  double deficit[NR_CTRL_MAX_UE];
+  for (int i = 0; i < n; i++)
+    deficit[i] = nr_ctrl_deficit(st, rnti[i]);
+  for (int i = 0; i < n; i++) {
+    double lowest = -1.0; /* lowest deficit among the other UEs of the group */
+    for (int j = 0; j < n; j++)
+      if (j != i && group[j] == group[i] && (lowest < 0.0 || deficit[j] < lowest))
+        lowest = deficit[j];
+    if (lowest < 0.0)
+      continue;
+    nr_ctrl_ue_t *u = get_or_add(st, rnti[i]);
+    if (!u)
+      continue;
+    double floor_rbs = lowest * (double)nr_ctrl_weight_of(st, rnti[i]) - (double)NR_CTRL_UE_CREDIT_RBS;
+    double have = (double)(u->granted_rbs + u->credit_rbs);
+    if (floor_rbs > have)
+      u->credit_rbs += (uint64_t)(floor_rbs - have);
   }
 }
 

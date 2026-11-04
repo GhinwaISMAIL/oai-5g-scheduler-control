@@ -36,8 +36,11 @@
 #define NR_CTRL_NO_SD 0xFFFFFFu /* S-NSSAI without a slice differentiator */
 /* A backlogged slice may be at most this many resource blocks of grants behind the other backlogged
  * slices (in units of its own weight): the credit a slice collects while it has little or nothing to
- * send, which it can spend as a burst once it has data again. */
+ * send, which it can spend as a burst once it has data again.  The same bound applies to a UE
+ * against the other backlogged UEs of its slice (of all UEs for wrr), so a UE that attaches or
+ * reconnects does not take every slot until its counter has caught up with its peers. */
 #define NR_CTRL_SLICE_CREDIT_RBS 2000
+#define NR_CTRL_UE_CREDIT_RBS 2000
 #define NR_CTRL_SLOTS 40 /* slot indices tracked (80 slots per frame at most 40 are kept) */
 
 enum { NR_CTRL_POLICY_PF = 0, NR_CTRL_POLICY_RR = 1, NR_CTRL_POLICY_WSHARE = 2, NR_CTRL_POLICY_WRR = 3, NR_CTRL_POLICY_SLICE = 4 };
@@ -50,6 +53,7 @@ typedef struct {
   uint32_t weight;
   int cap;
   uint64_t granted_rbs;
+  uint64_t credit_rbs;  /* virtual resource blocks added by the credit bound; only the ordering uses them */
   uint64_t granted_slots;
   uint64_t commit_fail; /* grants planned for this UE that the MAC refused */
   uint8_t assoc;        /* 1: explicitly associated with `slice` */
@@ -63,6 +67,7 @@ typedef struct {
   uint32_t weight;
   int cap;
   uint64_t granted_rbs;
+  uint64_t credit_rbs; /* virtual resource blocks added by the credit bound; only the ordering uses them */
   uint64_t granted_slots;
   uint8_t configured;  /* a SLICE command set its weight or cap (even to the default value) */
 } nr_ctrl_slice_t;
@@ -115,7 +120,7 @@ void nr_ctrl_init(nr_ctrl_state_t *st);
 const char *nr_ctrl_policy_name(int policy);
 uint32_t nr_ctrl_weight_of(const nr_ctrl_state_t *st, uint16_t rnti);
 int nr_ctrl_cap_of(const nr_ctrl_state_t *st, uint16_t rnti);
-/* granted_rbs / weight, the quantity the policy equalises */
+/* (granted_rbs + credit_rbs) / weight, the quantity the policy equalises */
 double nr_ctrl_deficit(const nr_ctrl_state_t *st, uint16_t rnti);
 void nr_ctrl_account(nr_ctrl_state_t *st, uint16_t rnti, int rbs);
 
@@ -123,16 +128,19 @@ void nr_ctrl_account(nr_ctrl_state_t *st, uint16_t rnti, int rbs);
 void nr_ctrl_note_nssai(nr_ctrl_state_t *st, uint16_t rnti, uint8_t sst, uint32_t sd);
 /* Slice id of the UE (0..7) and, in *source, why: NR_CTRL_SRC_*. */
 int nr_ctrl_slice_of(const nr_ctrl_state_t *st, uint16_t rnti, int *source);
-/* granted_rbs / weight of the slice, the quantity the slice policy equalises */
+/* (granted_rbs + credit_rbs) / weight of the slice, the quantity the slice policy equalises */
 double nr_ctrl_slice_deficit(const nr_ctrl_state_t *st, int slice);
 int nr_ctrl_slice_cap(const nr_ctrl_state_t *st, int slice);
 void nr_ctrl_account_slice(nr_ctrl_state_t *st, int slice, int rbs);
-/* Called once per scheduler call with the slices that have a UE with new data.  The counter of a
+/* Called once per scheduler call with the slices that have a UE with new data.  The credit of a
  * backlogged slice is raised, never lowered, so that its deficit is at most NR_CTRL_SLICE_CREDIT_RBS
  * (of its own weight) below the lowest deficit of the other backlogged slices.  A slice that had
  * little or nothing to send for a while can therefore burst by that much, but cannot take every slot
  * until it has caught up with what it did not use. */
 void nr_ctrl_slice_activity(nr_ctrl_state_t *st, const uint8_t backlogged[NR_CTRL_MAX_SLICE]);
+/* The same for the UEs that have new data in this call: group[i] is the slice of UE i (0 for all in
+ * wrr).  A UE is compared with the other UEs of its group only, with NR_CTRL_UE_CREDIT_RBS. */
+void nr_ctrl_ue_activity(nr_ctrl_state_t *st, const uint16_t *rnti, const uint8_t *group, int n);
 void nr_ctrl_note_commit_fail(nr_ctrl_state_t *st, uint16_t rnti, int slot, int cce);
 /* Drop entries of UEs that are no longer connected. */
 void nr_ctrl_prune(nr_ctrl_state_t *st, const nr_ctrl_ue_view_t *ues, int n_ues);

@@ -198,6 +198,16 @@ static int ctrl_sequential(const nr_dl_sched_params_t *params, nr_dl_candidate_t
   }
   if (mode == SEQ_SLICE)
     nr_ctrl_slice_activity(&g_state, backlogged);
+  if (mode != SEQ_RR && n > 1) {
+    /* a UE that is new or has had little to send does not hold unlimited credit against its peers */
+    uint16_t rnti[MAX_MOBILES_PER_GNB];
+    uint8_t group[MAX_MOBILES_PER_GNB];
+    for (int i = 0; i < n; i++) {
+      rnti[i] = order[i].c->rnti;
+      group[i] = (mode == SEQ_SLICE) ? (uint8_t)order[i].slice : 0;
+    }
+    nr_ctrl_ue_activity(&g_state, rnti, group, n);
+  }
   if (n == 0)
     return n_sched;
 
