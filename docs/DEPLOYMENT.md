@@ -230,3 +230,26 @@ Before changing any policy repeat the traffic test with the new image and policy
 `bin/sched-ctl.py` as described in `SCHEDULER_CONTROL.md` and compare the shares
 reported by `measure` with the traffic counters at the receivers over the same
 interval.
+
+## Second slice (two S-NSSAIs)
+
+The profile parameter `second_slice` (default off, needs at least two UEs per cell) adds the S-NSSAI
+SST 2 without SD next to SST 1: in the gNB `snssaiList`, in the AMF, SMF and UPF configuration and in the
+subscribers. The first half of the UEs (rounded up) attach with SST 1, the others with SST 2. With the
+parameter off nothing changes.
+
+The core then runs from generated copies of its configuration
+(`etc/mini_nonrf_config.second.yaml`, `etc/docker-compose-core.second.yaml`, written by
+`bin/gen-second-slice.py`; the tracked files are not modified). Instantiate the profile with the
+parameter on, or on a running reservation re-run the setup, core node first and then the cell node (the
+core network and the RIC restart, so the gNB and the UEs restart too):
+
+```bash
+cd /local/repository
+sudo SECOND_SLICE=1 bash bin/node-setup.sh core 0 1 4 uniform AWGN >> /local/logs/setup.log 2>&1   # core node
+sudo SECOND_SLICE=1 GNB_CTRL=1 bash bin/node-setup.sh cell 1 1 4 uniform AWGN >> /local/logs/setup.log 2>&1   # cell node
+```
+
+Check that the UEs registered with the right slice: `python3 bin/sched-ctl.py status` shows the S-NSSAI of
+every UE in the `nssai` column (`1:ffffff` or `2:ffffff`). Procedure and expected values:
+`SLICING_LIVE_TEST.md`, run 9.

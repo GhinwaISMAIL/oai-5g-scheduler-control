@@ -5,3 +5,4 @@ __pycache__/
 gnb/test/test_ctrl
 gnb/test/test_ctrl_tsan
 gnb/test/test_ctrl_asan
+etc/*.second.yaml

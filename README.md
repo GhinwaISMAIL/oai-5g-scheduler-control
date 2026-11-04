@@ -48,6 +48,7 @@ Create a POWDER profile from this repository (`profile.py`) with these parameter
 | `channel_type`, `channel_initial_mode` | AWGN, uniform | RFsim channel model |
 | `controllable_scheduler` | true | use the controllable gNB image |
 | `gnb_ctrl_image` | pinned tag | image to pull; empty builds it on the cell node |
+| `second_slice` | false | add S-NSSAI SST 2 to the gNB, core and subscribers; half of the UEs attach with it (needs 2 or more UEs) |
 
 Progress is in `/local/logs/setup.log` on every node, the RIC output in
 `/local/logs/nearRT-RIC.log` on the core. The cell node writes `/local/logs/CELL_READY` when the
@@ -141,8 +142,8 @@ One cell, up to the UEs a single `nr-softmodem` serves. A weight is a share of t
 among the UEs that have data in the same slot, not a guaranteed throughput. Uplink scheduling is not
 controlled. RFsim does not provide physical RF coverage.
 Slices: 8 slices, one UE per slot, membership by RNTI association, then by the S-NSSAI the MAC
-reports (SST 1 without SD for all UEs here). Not tested: two different S-NSSAIs in the core, a UE that
-attaches with a new RNTI during a run, and the standard FlexRIC slice message.
+reports (SST 1 without SD for all UEs by default). Two different S-NSSAIs are available with `second_slice` (host-tested, not yet run on a reservation).
+Not tested: a UE that attaches with a new RNTI during a run, and the standard FlexRIC slice message.
 
 ## Layout
 
@@ -150,6 +151,7 @@ attaches with a new RNTI during a run, and the standard FlexRIC slice message.
 profile.py                 POWDER profile: 1 core node + 1 cell node
 bin/node-setup.sh          setup dispatcher (core | cell); core-setup.sh and cell-setup.sh do the work
 bin/sched-ctl.py           scheduler control and measurement on the cell node
+bin/gen-second-slice.py    core configuration with a second S-NSSAI (profile parameter second_slice)
 gnb/src, gnb/patches       controllable scheduler and OAI patches; build-gnb-image.sh builds the image
 gnb/test                   native tests of the scheduler
 xapp/xapp_sched_ctrl.c     xApp that sends the scheduler commands over E2

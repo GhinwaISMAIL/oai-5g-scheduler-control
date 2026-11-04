@@ -239,6 +239,25 @@ sleep 62; python3 bin/sched-ctl.py measure --seconds 20; python3 bin/sched-ctl.p
 Expect about 25 % for each UE, `U4` included. The counters of `U4` stay far below the others; they
 count real grants.
 
+**Run 9, two S-NSSAIs in the core.** Needs a reservation with `second_slice` on and four UEs
+(`ues_per_cell` 4): UEs 1 and 2 attach with SST 1, UEs 3 and 4 with SST 2. Not run yet.
+
+First check the attachment (cell1): `python3 bin/sched-ctl.py status` must list all four UEs, with
+`nssai 1:ffffff` for `U1` and `U2` and `nssai 2:ffffff` for `U3` and `U4`. If a UE is missing, or has
+no tunnel address (`ip -4 addr show oaitun_ue1` in its container), the core did not accept the second
+slice: look at `sudo docker logs ric5g-oai-amf` and `ric5g-oai-smf` for `NSSAI` and stop there; that is
+the finding.
+
+```bash
+~/x.sh policy slice
+~/x.sh nssai-map 1 none 1; ~/x.sh nssai-map 2 none 2
+~/x.sh slice-weight 1 3000; ~/x.sh slice-weight 2 1000
+~/dl.sh q9
+```
+Expect every UE `via nssai`, slices 75 : 25 and UEs 37.5 / 37.5 / 12.5 / 12.5 %. Then, during the traffic,
+`~/x.sh nssai-map 2 none -`: `U3` and `U4` fall back to slice 0 (`default`) and slice 0 takes 25 %
+at its weight of 1000, as before.
+
 At the end of the reservation: `~/x.sh reset`.
 
 ## 4. Results

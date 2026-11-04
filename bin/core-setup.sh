@@ -144,8 +144,18 @@ bash "${REPO_DIR}/bin/gen-subscribers.sh" "${NUM_CELLS}" "${UES_PER_CELL}" \
 echo "[CORE] Starting core network..."
 cd "${REPO_DIR}/etc" || fail "cannot enter ${REPO_DIR}/etc"
 docker compose -f docker-compose-core.yaml down > /dev/null 2>&1
-docker compose -f docker-compose-core.yaml up -d \
-    || fail "docker compose up of the core network failed"
+if [ "${SECOND_SLICE:-0}" = 1 ]; then
+    # second S-NSSAI (SST 2): the core runs from generated copies of its configuration;
+    # the tracked files stay as they are
+    echo "[CORE] Second slice on: SST 1 and SST 2"
+    python3 "${REPO_DIR}/bin/gen-second-slice.py" "${REPO_DIR}/etc" \
+        || fail "second-slice core configuration failed"
+    docker compose -f docker-compose-core.second.yaml up -d \
+        || fail "docker compose up of the core network failed"
+else
+    docker compose -f docker-compose-core.yaml up -d \
+        || fail "docker compose up of the core network failed"
+fi
 
 echo "[CORE] Waiting for AMF..."
 MAX_WAIT=600

@@ -43,6 +43,7 @@ READY_TIMEOUT="${READY_TIMEOUT:-3600}"
 
 REPO_DIR="/local/repository"
 . "${REPO_DIR}/bin/ready-lib.sh"
+. "${REPO_DIR}/bin/slice-lib.sh"
 
 # Per-cell identities. These MUST be unique across cells or the AMF/RIC will
 # reject or confuse the second gNB.
@@ -241,6 +242,12 @@ sed -e "s/@CELL_IDX@/${CELL_IDX}/g" \
     -e "s/@CELL_LAN_IP@/${CELL_LAN_IP}/g" \
     gnb-cell.conf.tmpl > gnb-cell${CELL_IDX}.conf || fail "gNB config generation failed"
 
+# Second S-NSSAI (SST 2): the gNB advertises both slices to the AMF.
+if second_slice_enabled; then
+    gnb_add_second_slice "gnb-cell${CELL_IDX}.conf" || fail "second slice: snssaiList not found in the gNB template"
+    echo "[CELL] Second slice on: gNB serves SST 1 and SST 2"
+fi
+
 # The gNB receiver needs rfsimu_channel_ue0..ue(K-1) for uplink connections.
 # Each UE receiver independently activates rfsimu_channel_enB0 (index 0) for
 # downlink. CHANMOD_MODE/TYPE are overridable.
@@ -288,6 +295,12 @@ for u in $(seq 1 "${UES_PER_CELL}"); do
     sed -e "s/@IMSI@/${IMSI}/g" \
         -e "s/@GNB_ADDR@/${CELL_LAN_IP}/g" \
         nr-ue.conf.tmpl > nr-ue-cell${CELL_IDX}-${u}.conf
+
+    UE_SST=$(ue_sst "${u}" "${UES_PER_CELL}")
+    if [ "${UE_SST}" != 1 ]; then
+        ue_set_sst "nr-ue-cell${CELL_IDX}-${u}.conf" "${UE_SST}" || fail "second slice: nssai_sst not found in the UE template"
+    fi
+    second_slice_enabled && echo "[CELL] UE ${u} (IMSI ${IMSI}): SST ${UE_SST}"
 
     cat >> "${COMPOSE}" <<EOF
 
