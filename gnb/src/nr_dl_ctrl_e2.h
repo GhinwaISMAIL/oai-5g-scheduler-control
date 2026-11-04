@@ -16,6 +16,7 @@
  *   opcode 6  SLICE CAP     arg = slice (0..7)   message = cap (0, or 5..275)
  *   opcode 7  ASSOC         arg = slice (0..7), 0xFF removes   message = rnti << 16
  *   opcode 8  NSSAI MAP     arg = slice (0..7), 0xFF deletes   message = sst << 24 | sd (24 bits, 0xFFFFFF: no sd)
+ *   opcode 9  SLICE DELETE  arg = slice (0..7)   message = 0
  *
  * The opcodes 1 to 4 have arg 0, so words built before the slice commands existed keep their meaning.
  *
@@ -51,6 +52,7 @@ enum {
   NR_CTRL_E2_OP_SLICE_CAP = 6,
   NR_CTRL_E2_OP_ASSOC = 7,
   NR_CTRL_E2_OP_NSSAI_MAP = 8,
+  NR_CTRL_E2_OP_SLICE_DEL = 9,
 };
 
 #define NR_CTRL_E2_NO_SLICE 0xFFu
@@ -174,6 +176,16 @@ static inline int nr_ctrl_e2_pack(const char *verb, const char *a1, const char *
     *act = (uint32_t)v;
     return 0;
   }
+  if (!strcmp(verb, "slice-del")) {
+    long id = nr_ctrl_e2_parse_uint(a1, NR_CTRL_E2_MAX_SLICE);
+    if (id < 0) {
+      *err = "slice must be 0..7";
+      return -1;
+    }
+    *hdr = (NR_CTRL_E2_MAGIC << 16) | ((uint32_t)id << 8) | NR_CTRL_E2_OP_SLICE_DEL;
+    *act = 0;
+    return 0;
+  }
   if (!strcmp(verb, "assoc")) {
     long rnti = nr_ctrl_e2_parse_rnti(a1);
     long id = nr_ctrl_e2_parse_slice_or_none(a2);
@@ -217,7 +229,7 @@ static inline int nr_ctrl_e2_pack(const char *verb, const char *a1, const char *
     *act = ((uint32_t)sst << 24) | (uint32_t)sd;
     return 0;
   }
-  *err = "command must be policy, weight, cap, reset, slice-weight, slice-cap, assoc or nssai-map";
+  *err = "command must be policy, weight, cap, reset, slice-weight, slice-cap, slice-del, assoc or nssai-map";
   return -1;
 }
 
@@ -265,6 +277,10 @@ static inline int nr_ctrl_e2_to_text(uint32_t hdr, uint32_t act, char *text, siz
     case NR_CTRL_E2_OP_SLICE_CAP:
       if (arg <= NR_CTRL_E2_MAX_SLICE && (act == 0 || (act >= NR_CTRL_E2_MIN_CAP && act <= NR_CTRL_E2_MAX_CAP)))
         n = snprintf(text, size, "SLICE %u CAP %u", arg, (unsigned)act);
+      break;
+    case NR_CTRL_E2_OP_SLICE_DEL:
+      if (arg <= NR_CTRL_E2_MAX_SLICE && act == 0)
+        n = snprintf(text, size, "SLICEDEL %u", arg);
       break;
     case NR_CTRL_E2_OP_ASSOC: {
       unsigned rnti = act >> 16;

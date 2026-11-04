@@ -11,6 +11,7 @@ on the host network, so run this on the cell node).
   sched-ctl.py cap <rnti> <0|5..275>
   sched-ctl.py slice <0..7> weight <1..1000000>
   sched-ctl.py slice <0..7> cap <0|5..275>
+  sched-ctl.py slice-del <0..7>                    slice back to its defaults; its associations and S-NSSAI rules are removed
   sched-ctl.py assoc <rnti> <0..7|->               slice of a UE, - removes the association
   sched-ctl.py nssai-map <sst> <sd|none> <0..7|->  slice for UEs with that S-NSSAI (sd in hex), - deletes the rule
   sched-ctl.py reset
@@ -245,6 +246,7 @@ def main(argv=None):
     p = sub.add_parser("weight"); p.add_argument("rnti"); p.add_argument("value", type=int)
     p = sub.add_parser("cap"); p.add_argument("rnti"); p.add_argument("rbs", type=int)
     p = sub.add_parser("slice"); p.add_argument("id", type=int); p.add_argument("field", choices=["weight", "cap"]); p.add_argument("value", type=int)
+    p = sub.add_parser("slice-del"); p.add_argument("id", type=int)
     p = sub.add_parser("assoc"); p.add_argument("rnti"); p.add_argument("slice")
     p = sub.add_parser("nssai-map"); p.add_argument("sst", type=int); p.add_argument("sd"); p.add_argument("slice")
     sub.add_parser("reset")
@@ -279,6 +281,14 @@ def main(argv=None):
             key = a.field
             h, u = set_and_verify(f"SLICE {a.id} {a.field.upper()} {a.value}",
                                   lambda h, u: any(s_["id"] == a.id and s_[key] == a.value for s_ in h["slices"]), **kw)
+            print_status(h, u)
+        elif a.cmd == "slice-del":
+            if not 0 <= a.id <= 7:
+                raise CtlError("slice must be 0..7")
+            gone = lambda h, u: (all(s_["weight"] == 1000 and s_["cap"] == 0 for s_ in h["slices"] if s_["id"] == a.id)
+                                 and not any(r_["slice"] == a.id for r_ in h["rules"])
+                                 and not any(x["slice"] == a.id and x["source"] == "rnti" for x in u))
+            h, u = set_and_verify(f"SLICEDEL {a.id}", gone, **kw)
             print_status(h, u)
         elif a.cmd == "assoc":
             r = parse_rnti(a.rnti)

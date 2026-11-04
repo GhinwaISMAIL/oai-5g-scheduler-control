@@ -16,6 +16,7 @@
 #include "gNB_scheduler_dlsch_default_policies.h"
 #include "nr_dl_ctrl_alloc.h"
 #include "nr_dl_ctrl_e2.h"
+#include "nr_dl_ctrl_slice_sm.h"
 #include "nr_dl_ctrl_state.h"
 #include "stubs.h"
 
@@ -1098,7 +1099,7 @@ static void test_slices_e2(void)
   CHECK(nr_ctrl_e2_to_text(0x53430102u, 0x10010bb8u, text, sizeof(text)) != 0);
   CHECK(nr_ctrl_e2_to_text(0x53430103u, 0x10010014u, text, sizeof(text)) != 0);
   CHECK(nr_ctrl_e2_to_text(0x53430104u, 0, text, sizeof(text)) != 0);
-  CHECK(nr_ctrl_e2_to_text(0x53430009u, 0, text, sizeof(text)) != 0);        /* unknown opcode */
+  CHECK(nr_ctrl_e2_to_text(0x5343000au, 0, text, sizeof(text)) != 0);        /* unknown opcode */
   CHECK(nr_ctrl_e2_to_text(0x53430805u, 5, text, sizeof(text)) != 0);        /* slice 8 */
   CHECK(nr_ctrl_e2_to_text(0x53430005u, 0, text, sizeof(text)) != 0);        /* weight 0 */
   CHECK(nr_ctrl_e2_to_text(0x53430105u, 0x10000u, text, sizeof(text)) != 0); /* weight above 65535 */
@@ -1548,6 +1549,395 @@ static void test_slices_dynamic(void)
   sim_setup(2);
 }
 
+/* ------------------------------------------------- standard slice messages */
+
+static int has(const char *r, const char *needle)
+{
+  return strstr(r, needle) != NULL;
+}
+
+static int send_plan(const nr_ctrl_sm_plan_t *plan, int *refused, char *reply, size_t size)
+{
+  return nr_ctrl_sm_apply(plan, (nr_ctrl_sm_send_fn)(void *)0, NULL, reply, size, refused);
+}
+
+static int e2_send_cb(const char *text, char *reply, size_t size, void *ctx)
+{
+  (void)ctx;
+  return nr_ctrl_e2_send(text, reply, size);
+}
+
+static int apply_plan(const nr_ctrl_sm_plan_t *plan, int *refused, char *reply, size_t size)
+{
+  return nr_ctrl_sm_apply(plan, e2_send_cb, NULL, reply, size, refused);
+}
+
+static void test_slice_del_command(void)
+{
+  char r[4096], g[8192], text[64];
+  uint32_t hdr, act;
+  const char *err = NULL;
+  (void)send_plan;
+
+  sim_setup(4);
+  slice_policy_on();
+  ctl("SLICE 3 WEIGHT 4000", r, sizeof(r));
+  ctl("SLICE 3 CAP 20", r, sizeof(r));
+  ctl("SLICE 2 WEIGHT 2000", r, sizeof(r));
+  ctl("ASSOC 1001 3", r, sizeof(r));
+  ctl("ASSOC 1002 2", r, sizeof(r));
+  ctl("NSSAIMAP 1 none 3", r, sizeof(r));
+  ctl("NSSAIMAP 2 none 2", r, sizeof(r));
+  ctl("GET", g, sizeof(g));
+  CHECK(has(g, "SLICE id=3 weight=4000 cap=20") && has(g, "RULE sst=1 sd=ffffff slice=3"));
+  long v0 = get_field(g, "version=");
+
+  /* slice 3 back to its defaults; the other slice, its UE and its rule stay */
+  ctl("SLICEDEL 3", r, sizeof(r));
+  CHECK(!strncmp(r, "OK", 2));
+  ctl("GET", g, sizeof(g));
+  CHECK(get_field(g, "version=") == v0 + 1);
+  CHECK(!has(g, "SLICE id=3 "));
+  CHECK(!has(g, "slice=3"));                                   /* no UE and no rule points to slice 3 */
+  CHECK(has(g, "SLICE id=2 weight=2000") && has(g, "RULE sst=2 sd=ffffff slice=2"));
+  CHECK(has(g, "rnti=0x1002") && has(g, "slice=2 source=rnti"));
+  CHECK(!has(g, "RULE sst=1"));
+  CHECK(has(g, "rnti=0x1001") && has(g, "slice=0 source=default"));
+
+  /* counters are cleared with the slice, and deleting an empty slice is allowed */
+  ctl("SLICE 4 WEIGHT 500", r, sizeof(r));
+  for (int i = 0; i < 50; i++)
+    (sim_slot_prepare(4, 1000000), sim_slot(4, 4));
+  ctl("SLICEDEL 4", r, sizeof(r));
+  CHECK(!strncmp(r, "OK", 2));
+  ctl("SLICEDEL 4", r, sizeof(r));
+  CHECK(!strncmp(r, "OK", 2));
+  ctl("SLICEDEL 0", r, sizeof(r)); /* slice 0: the default weight and no cap, the UEs stay in it */
+  CHECK(!strncmp(r, "OK", 2));
+
+  /* refusals change nothing */
+  ctl("GET", g, sizeof(g));
+  long v1 = get_field(g, "version=");
+  const char *bad[] = {"SLICEDEL 8", "SLICEDEL x", "SLICEDEL -1", "SLICEDEL", "SLICEDEL 1 2", "SLICEDEL 99999999999"};
+  for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+    ctl(bad[i], r, sizeof(r));
+    CHECK(!strncmp(r, "ERR", 3));
+  }
+  ctl("GET", g, sizeof(g));
+  CHECK(get_field(g, "version=") == v1);
+
+  /* the E2 word and the text of the command */
+  CHECK(nr_ctrl_e2_pack("slice-del", "3", NULL, NULL, &hdr, &act, &err) == 0 && hdr == 0x53430309u && act == 0);
+  CHECK(nr_ctrl_e2_pack("slice-del", "0", NULL, NULL, &hdr, &act, &err) == 0 && hdr == 0x53430009u);
+  CHECK(nr_ctrl_e2_pack("slice-del", "8", NULL, NULL, &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_pack("slice-del", NULL, NULL, NULL, &hdr, &act, &err) != 0);
+  CHECK(nr_ctrl_e2_to_text(0x53430309u, 0, text, sizeof(text)) == 0 && !strcmp(text, "SLICEDEL 3"));
+  CHECK(nr_ctrl_e2_to_text(0x53430809u, 0, text, sizeof(text)) != 0); /* slice 8 */
+  CHECK(nr_ctrl_e2_to_text(0x5343ff09u, 0, text, sizeof(text)) != 0);
+  CHECK(nr_ctrl_e2_to_text(0x53430309u, 1, text, sizeof(text)) != 0); /* the message word must be 0 */
+}
+
+static void test_slice_sm_plan(void)
+{
+  nr_ctrl_sm_plan_t plan;
+  char err[128];
+  nr_ctrl_sm_slice_t s[9];
+  memset(s, 0, sizeof(s));
+
+  /* NVS capacity: the share becomes the weight, the cap is cleared */
+  s[0] = (nr_ctrl_sm_slice_t){.id = 1, .alg = NR_CTRL_SM_ALG_NVS_CAPACITY, .pct_reserved = 0.7f};
+  s[1] = (nr_ctrl_sm_slice_t){.id = 5, .alg = NR_CTRL_SM_ALG_NVS_CAPACITY, .pct_reserved = 1.0f};
+  CHECK(nr_ctrl_sm_plan_add(s, 2, 0, &plan, err, sizeof(err)) == 0 && plan.n == 4);
+  CHECK(!strcmp(plan.text[0], "SLICE 1 WEIGHT 700") && !strcmp(plan.text[1], "SLICE 1 CAP 0"));
+  CHECK(!strcmp(plan.text[2], "SLICE 5 WEIGHT 1000") && !strcmp(plan.text[3], "SLICE 5 CAP 0"));
+  s[0].pct_reserved = 0.0004f; /* below one thousandth: weight 1, never 0 */
+  CHECK(nr_ctrl_sm_plan_add(s, 1, 0, &plan, err, sizeof(err)) == 0 && !strcmp(plan.text[0], "SLICE 1 WEIGHT 1"));
+
+  /* STATIC: the width is the cap, the weight is the default */
+  s[0] = (nr_ctrl_sm_slice_t){.id = 2, .alg = NR_CTRL_SM_ALG_STATIC, .pos_low = 8, .pos_high = 12};
+  CHECK(nr_ctrl_sm_plan_add(s, 1, 0, &plan, err, sizeof(err)) == 0 && plan.n == 2);
+  CHECK(!strcmp(plan.text[0], "SLICE 2 WEIGHT 1000") && !strcmp(plan.text[1], "SLICE 2 CAP 5"));
+  s[0].pos_low = 0;
+  s[0].pos_high = 274;
+  CHECK(nr_ctrl_sm_plan_add(s, 1, 0, &plan, err, sizeof(err)) == 0 && !strcmp(plan.text[1], "SLICE 2 CAP 275"));
+
+  /* refusals leave an empty plan, with a reason */
+  struct { nr_ctrl_sm_slice_t x; const char *why; } bad[] = {
+    {{.id = 1, .alg = NR_CTRL_SM_ALG_NVS_CAPACITY, .pct_reserved = 0.0f}, "pct"},
+    {{.id = 1, .alg = NR_CTRL_SM_ALG_NVS_CAPACITY, .pct_reserved = 1.01f}, "pct"},
+    {{.id = 1, .alg = NR_CTRL_SM_ALG_NVS_CAPACITY, .pct_reserved = -0.5f}, "pct"},
+    {{.id = 1, .alg = NR_CTRL_SM_ALG_NVS_CAPACITY, .pct_reserved = 70.0f}, "pct"},
+    {{.id = 1, .alg = NR_CTRL_SM_ALG_NVS_CAPACITY, .pct_reserved = __builtin_nanf("")}, "pct"},
+    {{.id = 8, .alg = NR_CTRL_SM_ALG_NVS_CAPACITY, .pct_reserved = 0.5f}, "outside"},
+    {{.id = 0xffffffffu, .alg = NR_CTRL_SM_ALG_NVS_CAPACITY, .pct_reserved = 0.5f}, "outside"},
+    {{.id = 1, .alg = NR_CTRL_SM_ALG_STATIC, .pos_low = 0, .pos_high = 3}, "width"},   /* 4 resource blocks */
+    {{.id = 1, .alg = NR_CTRL_SM_ALG_STATIC, .pos_low = 0, .pos_high = 275}, "width"}, /* 276 */
+    {{.id = 1, .alg = NR_CTRL_SM_ALG_STATIC, .pos_low = 9, .pos_high = 3}, "below"},
+    {{.id = 1, .alg = NR_CTRL_SM_ALG_STATIC, .pos_low = 0xffffffffu, .pos_high = 0}, "below"},
+    {{.id = 1, .alg = NR_CTRL_SM_ALG_STATIC, .pos_low = 0, .pos_high = 0xffffffffu}, "width"},
+    {{.id = 1, .alg = NR_CTRL_SM_ALG_UNSUPPORTED}, "supported"},
+  };
+  for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+    s[0] = bad[i].x;
+    err[0] = 0;
+    CHECK(nr_ctrl_sm_plan_add(s, 1, 0, &plan, err, sizeof(err)) != 0 && plan.n == 0 && has(err, bad[i].why));
+  }
+  /* one bad slice among good ones: nothing is planned */
+  s[0] = (nr_ctrl_sm_slice_t){.id = 1, .alg = NR_CTRL_SM_ALG_NVS_CAPACITY, .pct_reserved = 0.5f};
+  s[1] = (nr_ctrl_sm_slice_t){.id = 2, .alg = NR_CTRL_SM_ALG_UNSUPPORTED};
+  CHECK(nr_ctrl_sm_plan_add(s, 2, 0, &plan, err, sizeof(err)) != 0 && plan.n == 0);
+  /* the same id twice, uplink slices, too many slices */
+  s[1] = s[0];
+  CHECK(nr_ctrl_sm_plan_add(s, 2, 0, &plan, err, sizeof(err)) != 0 && has(err, "twice"));
+  CHECK(nr_ctrl_sm_plan_add(s, 1, 1, &plan, err, sizeof(err)) != 0 && has(err, "uplink"));
+  for (int i = 0; i < 9; i++)
+    s[i] = (nr_ctrl_sm_slice_t){.id = (uint32_t)(i % 8), .alg = NR_CTRL_SM_ALG_NVS_CAPACITY, .pct_reserved = 0.1f};
+  CHECK(nr_ctrl_sm_plan_add(s, 9, 0, &plan, err, sizeof(err)) != 0 && has(err, "more than 8"));
+  for (int i = 0; i < 8; i++)
+    s[i].id = (uint32_t)i;
+  CHECK(nr_ctrl_sm_plan_add(s, 8, 0, &plan, err, sizeof(err)) == 0 && plan.n == 16);
+
+  /* no slice in the message: all slices deleted */
+  CHECK(nr_ctrl_sm_plan_add(s, 0, 0, &plan, err, sizeof(err)) == 0 && plan.n == 8);
+  CHECK(!strcmp(plan.text[0], "SLICEDEL 0") && !strcmp(plan.text[7], "SLICEDEL 7"));
+
+  /* the example of the stock slice xApp (static slices of 4, 4 and 5 resource blocks) is refused: below the minimum grant */
+  s[0] = (nr_ctrl_sm_slice_t){.id = 0, .alg = NR_CTRL_SM_ALG_STATIC, .pos_low = 0, .pos_high = 3};
+  s[1] = (nr_ctrl_sm_slice_t){.id = 2, .alg = NR_CTRL_SM_ALG_STATIC, .pos_low = 4, .pos_high = 7};
+  s[2] = (nr_ctrl_sm_slice_t){.id = 5, .alg = NR_CTRL_SM_ALG_STATIC, .pos_low = 8, .pos_high = 12};
+  CHECK(nr_ctrl_sm_plan_add(s, 3, 0, &plan, err, sizeof(err)) != 0 && plan.n == 0);
+
+  /* delete and association */
+  uint32_t ids[9] = {2, 5, 0, 1, 1, 1, 1, 1, 1};
+  CHECK(nr_ctrl_sm_plan_del(ids, 2, 0, &plan, err, sizeof(err)) == 0 && plan.n == 2 && !strcmp(plan.text[0], "SLICEDEL 2") && !strcmp(plan.text[1], "SLICEDEL 5"));
+  CHECK(nr_ctrl_sm_plan_del(ids, 0, 0, &plan, err, sizeof(err)) != 0);
+  CHECK(nr_ctrl_sm_plan_del(ids, 2, 1, &plan, err, sizeof(err)) != 0 && has(err, "uplink"));
+  CHECK(nr_ctrl_sm_plan_del(ids, 9, 0, &plan, err, sizeof(err)) != 0 && has(err, "more than 8"));
+  ids[1] = 8;
+  CHECK(nr_ctrl_sm_plan_del(ids, 2, 0, &plan, err, sizeof(err)) != 0 && plan.n == 0 && has(err, "outside"));
+
+  nr_ctrl_sm_assoc_t a[33];
+  memset(a, 0, sizeof(a));
+  a[0] = (nr_ctrl_sm_assoc_t){.rnti = 0x1001, .dl_id = 1};
+  a[1] = (nr_ctrl_sm_assoc_t){.rnti = 0xabcd, .dl_id = 7};
+  CHECK(nr_ctrl_sm_plan_assoc(a, 2, &plan, err, sizeof(err)) == 0 && plan.n == 2 && !strcmp(plan.text[0], "ASSOC 1001 1") && !strcmp(plan.text[1], "ASSOC abcd 7"));
+  CHECK(nr_ctrl_sm_plan_assoc(a, 0, &plan, err, sizeof(err)) != 0);
+  a[1].rnti = 0;
+  CHECK(nr_ctrl_sm_plan_assoc(a, 2, &plan, err, sizeof(err)) != 0 && plan.n == 0 && has(err, "RNTI"));
+  a[1].rnti = 0x10000;
+  CHECK(nr_ctrl_sm_plan_assoc(a, 2, &plan, err, sizeof(err)) != 0 && has(err, "RNTI"));
+  a[1].rnti = 0x1002;
+  a[1].dl_id = 8;
+  CHECK(nr_ctrl_sm_plan_assoc(a, 2, &plan, err, sizeof(err)) != 0 && has(err, "outside"));
+  for (int i = 0; i < 33; i++)
+    a[i] = (nr_ctrl_sm_assoc_t){.rnti = (uint32_t)(0x2000 + i), .dl_id = 1};
+  CHECK(nr_ctrl_sm_plan_assoc(a, 32, &plan, err, sizeof(err)) == 0 && plan.n == 32);
+  CHECK(nr_ctrl_sm_plan_assoc(a, 33, &plan, err, sizeof(err)) != 0 && has(err, "more than 32"));
+  /* a short error buffer is filled and terminated */
+  char tiny[8];
+  CHECK(nr_ctrl_sm_plan_assoc(a, 0, &plan, tiny, sizeof(tiny)) != 0 && strlen(tiny) < sizeof(tiny));
+}
+
+static void test_slice_sm_parse(void)
+{
+  char g[8192];
+  nr_ctrl_sm_view_t v;
+
+  sim_setup(3);
+  slice_policy_on();
+  ctl("SLICE 1 WEIGHT 700", g, sizeof(g));
+  ctl("SLICE 6 CAP 30", g, sizeof(g));
+  ctl("ASSOC 1002 6", g, sizeof(g));
+  ctl("GET", g, sizeof(g));
+  CHECK(nr_ctrl_sm_parse_get(g, &v) == 0);
+  CHECK(!strcmp(v.policy, "slice"));
+  CHECK(v.n_slice >= 2);
+  int ok1 = 0, ok6 = 0;
+  for (int i = 0; i < v.n_slice; i++) {
+    if (v.slice[i].id == 1 && v.slice[i].weight == 700 && v.slice[i].cap == 0)
+      ok1 = 1;
+    if (v.slice[i].id == 6 && v.slice[i].weight == 1000 && v.slice[i].cap == 30)
+      ok6 = 1;
+  }
+  CHECK(ok1 && ok6);
+  CHECK(v.n_ue == 3);
+  int in6 = 0, in0 = 0;
+  for (int i = 0; i < v.n_ue; i++) {
+    if (v.ue[i].rnti == 0x1002 && v.ue[i].slice == 6)
+      in6 = 1;
+    if (v.ue[i].rnti != 0x1002 && v.ue[i].slice == 0)
+      in0++;
+  }
+  CHECK(in6 && in0 == 2);
+
+  /* a reply cut off at any length, an error reply and text that is no reply never crash and never give invented entries */
+  size_t full = strlen(g);
+  for (size_t cut = 0; cut <= full; cut += 7) {
+    char part[8192];
+    memcpy(part, g, cut);
+    part[cut] = '\0';
+    int rc = nr_ctrl_sm_parse_get(part, &v);
+    CHECK(rc == 0 || rc == -1);
+    CHECK(v.n_slice <= NR_CTRL_SM_MAX_SLICE && v.n_ue <= NR_CTRL_SM_MAX_UE);
+    for (int i = 0; i < v.n_ue; i++)
+      CHECK(v.ue[i].rnti >= 0x1001 && v.ue[i].rnti <= 0x1003);
+  }
+  CHECK(nr_ctrl_sm_parse_get("ERR unknown_command\n", &v) != 0);
+  CHECK(nr_ctrl_sm_parse_get("", &v) != 0);
+  CHECK(nr_ctrl_sm_parse_get("OK ctrl v1\n", &v) != 0); /* a PING reply has no policy */
+  CHECK(nr_ctrl_sm_parse_get("OK version=1 policy=pf\nSLICE id=9 weight=1 cap=0\nSLICE id=x\nUE rnti=0xzz\nUE rnti=0x1 slice=9\n", &v) == 0 && v.n_slice == 0 && v.n_ue == 0);
+}
+
+/* A slice message from the xApp, through the translator and the real endpoint, against the scheduler. */
+static void test_slice_sm_roundtrip(void)
+{
+  char r[4096], g[8192], err[128];
+  double got[40], tot;
+  nr_ctrl_sm_plan_t plan;
+  nr_ctrl_sm_slice_t s[2];
+  nr_ctrl_sm_assoc_t a[4];
+  int refused;
+
+  sim_setup(4);
+  slice_policy_on();
+  memset(got, 0, sizeof(got));
+
+  /* two NVS slices of 75 % and 25 %, UEs 1001 and 1002 in the first, 1003 and 1004 in the second */
+  s[0] = (nr_ctrl_sm_slice_t){.id = 1, .alg = NR_CTRL_SM_ALG_NVS_CAPACITY, .pct_reserved = 0.75f};
+  s[1] = (nr_ctrl_sm_slice_t){.id = 2, .alg = NR_CTRL_SM_ALG_NVS_CAPACITY, .pct_reserved = 0.25f};
+  CHECK(nr_ctrl_sm_plan_add(s, 2, 0, &plan, err, sizeof(err)) == 0);
+  CHECK(apply_plan(&plan, &refused, r, sizeof(r)) == 4 && refused == -1);
+  for (int i = 0; i < 4; i++)
+    a[i] = (nr_ctrl_sm_assoc_t){.rnti = (uint32_t)(0x1001 + i), .dl_id = i < 2 ? 1u : 2u};
+  CHECK(nr_ctrl_sm_plan_assoc(a, 4, &plan, err, sizeof(err)) == 0);
+  CHECK(apply_plan(&plan, &refused, r, sizeof(r)) == 4 && refused == -1);
+  dyn_run(4, NULL, 4000, got, 0, NULL);
+  tot = got[0] + got[1] + got[2] + got[3];
+  CHECK(fabs((got[0] + got[1]) / tot - 0.75) < 0.02);
+  CHECK(fabs(got[0] / tot - 0.375) < 0.02 && fabs(got[2] / tot - 0.125) < 0.02);
+
+  /* the status read back through the indication path agrees */
+  nr_ctrl_sm_view_t v;
+  CHECK(nr_ctrl_e2_send("GET", g, sizeof(g)) == 0 && nr_ctrl_sm_parse_get(g, &v) == 0);
+  int w1 = 0, w2 = 0;
+  for (int i = 0; i < v.n_slice; i++) {
+    w1 += v.slice[i].id == 1 && v.slice[i].weight == 750;
+    w2 += v.slice[i].id == 2 && v.slice[i].weight == 250;
+  }
+  CHECK(w1 == 1 && w2 == 1 && v.n_ue == 4);
+
+  /* delete slice 1: its UEs fall back to slice 0 (weight 1000) next to slice 2 (weight 250), 80 : 20 */
+  uint32_t del = 1;
+  CHECK(nr_ctrl_sm_plan_del(&del, 1, 0, &plan, err, sizeof(err)) == 0 && apply_plan(&plan, &refused, r, sizeof(r)) == 1);
+  memset(got, 0, sizeof(got));
+  dyn_run(4, NULL, 4000, got, 0, NULL);
+  tot = got[0] + got[1] + got[2] + got[3];
+  CHECK(fabs((got[0] + got[1]) / tot - 0.80) < 0.02);
+  CHECK(fabs(got[0] / tot - got[1] / tot) < 0.02); /* the two UEs of slice 0 share it equally */
+
+  /* a static slice limits the resource blocks the slice takes per call */
+  s[0] = (nr_ctrl_sm_slice_t){.id = 2, .alg = NR_CTRL_SM_ALG_STATIC, .pos_low = 0, .pos_high = 9};
+  CHECK(nr_ctrl_sm_plan_add(s, 1, 0, &plan, err, sizeof(err)) == 0 && apply_plan(&plan, &refused, r, sizeof(r)) == 2);
+  nr_ctrl_e2_send("GET", g, sizeof(g));
+  CHECK(has(g, "SLICE id=2 weight=1000 cap=10"));
+  memset(got, 0, sizeof(got));
+  dyn_run(4, NULL, 2000, got, 0, NULL);
+  tot = got[0] + got[1] + got[2] + got[3];
+  CHECK(got[2] + got[3] > 0 && (got[2] + got[3]) / tot < 0.10); /* at most 10 of the resource blocks of a slot */
+
+  /* a message without slices removes all of them */
+  CHECK(nr_ctrl_sm_plan_add(s, 0, 0, &plan, err, sizeof(err)) == 0 && apply_plan(&plan, &refused, r, sizeof(r)) == 8);
+  nr_ctrl_e2_send("GET", g, sizeof(g));
+  CHECK(!has(g, "cap=10") && !has(g, "weight=750") && !has(g, "slice=1") && !has(g, "slice=2"));
+  memset(got, 0, sizeof(got));
+  dyn_run(4, NULL, 4000, got, 0, NULL);
+  tot = got[0] + got[1] + got[2] + got[3];
+  for (int i = 0; i < 4; i++)
+    CHECK(fabs(got[i] / tot - 0.25) < 0.02);
+
+  /* the endpoint refuses an unknown RNTI: the commands before it are applied, the rest is not */
+  a[0] = (nr_ctrl_sm_assoc_t){.rnti = 0x1001, .dl_id = 3};
+  a[1] = (nr_ctrl_sm_assoc_t){.rnti = 0x7777, .dl_id = 3};
+  a[2] = (nr_ctrl_sm_assoc_t){.rnti = 0x1002, .dl_id = 3};
+  CHECK(nr_ctrl_sm_plan_assoc(a, 3, &plan, err, sizeof(err)) == 0);
+  CHECK(apply_plan(&plan, &refused, r, sizeof(r)) == 1 && refused == 1 && has(r, "unknown_rnti"));
+  nr_ctrl_e2_send("GET", g, sizeof(g));
+  CHECK(has(g, "rnti=0x1001") && has(g, "slice=3 source=rnti") && !has(g, "rnti=0x1002 weight=1000 explicit=0 cap=0 granted_rbs=0 granted_slots=0 commit_fail=0 mac_dl_rbs=0 mac_dl_rbs_retx=0 mac_dl_sdu_bytes=0 slice=3"));
+  slice_policy_on();
+}
+
+/* Several UEs (or slices) that were behind together must not hold the others off: the credit of each is
+ * bounded against the leader, not against the other laggards. */
+static void test_credit_groups(void)
+{
+  char r[512];
+  double got[40], tot;
+
+  /* wrr: UEs 1003 and 1004 have nothing to send for 3000 calls, then all four have data */
+  sim_setup(4);
+  ctl("RESET", r, sizeof(r));
+  ctl("POLICY wrr", r, sizeof(r));
+  for (int s = 0; s < 3000; s++) {
+    sim_slot_prepare(4, 1000000);
+    cands[2].skipped = cands[3].skipped = true;
+    sim_slot(4, 4);
+  }
+  memset(got, 0, sizeof(got));
+  dyn_run(4, NULL, 4000, got, 0, NULL);
+  tot = got[0] + got[1] + got[2] + got[3];
+  for (int i = 0; i < 4; i++)
+    CHECK(fabs(got[i] / tot - 0.25) < 0.02);
+
+  /* the same with three late UEs out of four */
+  sim_setup(4);
+  ctl("RESET", r, sizeof(r));
+  ctl("POLICY wrr", r, sizeof(r));
+  for (int s = 0; s < 3000; s++) {
+    sim_slot_prepare(4, 1000000);
+    cands[1].skipped = cands[2].skipped = cands[3].skipped = true;
+    sim_slot(4, 4);
+  }
+  memset(got, 0, sizeof(got));
+  dyn_run(4, NULL, 4000, got, 0, NULL);
+  tot = got[0] + got[1] + got[2] + got[3];
+  for (int i = 0; i < 4; i++)
+    CHECK(fabs(got[i] / tot - 0.25) < 0.02);
+
+  /* slices: slice 1 alone for 3000 calls, then slices 2 and 3 appear (equal weights, one UE each) */
+  sim_setup(3);
+  slice_policy_on();
+  ctl("ASSOC 1001 1", r, sizeof(r));
+  ctl("ASSOC 1002 2", r, sizeof(r));
+  ctl("ASSOC 1003 3", r, sizeof(r));
+  for (int s = 0; s < 3000; s++) {
+    sim_slot_prepare(3, 1000000);
+    cands[1].skipped = cands[2].skipped = true;
+    sim_slot(3, 4);
+  }
+  memset(got, 0, sizeof(got));
+  dyn_run(3, NULL, 4000, got, 0, NULL);
+  tot = got[0] + got[1] + got[2];
+  for (int i = 0; i < 3; i++)
+    CHECK(fabs(got[i] / tot - 1.0 / 3.0) < 0.02);
+
+  /* the burst of the late ones is still allowed, up to the bound: within the first 100 calls the late UEs get
+   * more than their share, but the leader keeps some of the calls */
+  sim_setup(4);
+  ctl("RESET", r, sizeof(r));
+  ctl("POLICY wrr", r, sizeof(r));
+  for (int s = 0; s < 3000; s++) {
+    sim_slot_prepare(4, 1000000);
+    cands[2].skipped = cands[3].skipped = true;
+    sim_slot(4, 4);
+  }
+  double early[40];
+  memset(got, 0, sizeof(got));
+  memset(early, 0, sizeof(early));
+  dyn_run(4, NULL, 2000, got, 200, early);
+  CHECK(early[0] + early[1] > 0);                       /* the leaders are served during the catch-up */
+  CHECK((early[2] + early[3]) / (early[0] + early[1] + early[2] + early[3]) < 0.75);
+}
+
 int main(void)
 {
   test_split_examples();
@@ -1560,6 +1950,11 @@ int main(void)
   test_slices_e2();
   test_ue_credit();
   test_slices_dynamic();
+  test_credit_groups();
+  test_slice_del_command();
+  test_slice_sm_plan();
+  test_slice_sm_parse();
+  test_slice_sm_roundtrip();
   test_second_instance();
   test_many_ues();
   test_concurrency();

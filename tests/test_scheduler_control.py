@@ -118,6 +118,79 @@ def test_client_slice_commands_are_read_back(server):
     assert not any((line.split() or [''])[0].isdigit() for line in r.stdout.splitlines())
 
 
+def test_client_slice_del_resets_one_slice(server):
+    assert client(server, "policy", "slice").returncode == 0
+    assert client(server, "slice", "3", "weight", "4000").returncode == 0
+    assert client(server, "slice", "3", "cap", "20").returncode == 0
+    assert client(server, "slice", "2", "weight", "2000").returncode == 0
+    assert client(server, "assoc", "1001", "3").returncode == 0
+    assert client(server, "assoc", "1002", "2").returncode == 0
+    r = client(server, "nssai-map", "1", "none", "3")
+    assert r.returncode == 0 and "sst=1 sd=none -> slice 3" in r.stdout
+    r = client(server, "slice-del", "3")
+    assert r.returncode == 0, r.stderr
+    rows = [line.split() for line in r.stdout.splitlines() if (line.split() or [''])[0].isdigit()]
+    assert not any(row[0] == "3" for row in rows) and any(row[0] == "2" and row[1] == "2000" for row in rows)
+    assert "rule:" not in r.stdout
+    row = [line for line in r.stdout.splitlines() if line.startswith("0x1001")][0].split()
+    assert row[-3:-1] == ["0", "default"]
+    row = [line for line in r.stdout.splitlines() if line.startswith("0x1002")][0].split()
+    assert row[-3:-1] == ["2", "rnti"]
+    assert client(server, "slice-del", "3").returncode == 0  # an empty slice can be deleted again
+    assert client(server, "reset").returncode == 0
+
+
+@pytest.mark.parametrize("arg", ["8", "-1", "x"])
+def test_client_slice_del_rejects_a_bad_slice(server, arg):
+    r = client(server, "slice-del", arg)
+    assert r.returncode != 0
+
+
+def slice_handler_source():
+    """The new ran_func_slice.c, rebuilt from the lines of the patch that are kept or added (the patch holds the whole file)."""
+    text = (GNB / "patches" / "0004-e2-slice-control.patch").read_text()
+    hunks = text.split("\n@@", 1)[1].split("\n", 1)[1]
+    return "\n".join(line[1:] for line in hunks.split("\n") if line.startswith(("+", " "))) + "\n"
+
+
+def test_slice_handler_patch_touches_only_the_slice_handler():
+    text = (GNB / "patches" / "0004-e2-slice-control.patch").read_text()
+    assert re.findall(r"^diff --git a/(\S+) b/", text, re.M) == ["openair2/E2AP/RAN_FUNCTION/CUSTOMIZED/ran_func_slice.c"]
+    assert text.count("\n@@") == 1  # one hunk with the whole file, so the test below sees all of it
+    source = slice_handler_source()
+    assert "fill_slice_ind_data" not in source and "fill_rnd_data_slice" not in source  # no random data
+    assert "nr_ctrl_sm_plan_add" in source and "nr_ctrl_sm_plan_del" in source and "nr_ctrl_sm_plan_assoc" in source
+
+
+@needs_gcc
+def test_slice_handler_runs_against_the_control_endpoint(tmp_path):
+    (tmp_path / "ran_func_slice.c").write_text(slice_handler_source())
+    inc = tmp_path / "inc" / "openair2" / "LAYER2"
+    inc.mkdir(parents=True)
+    (inc / "NR_MAC_gNB").symlink_to(GNB / "src")
+    stub = GNB / "test" / "flexric_stub"
+    flags = ["-std=gnu11", "-O1", "-g", "-Wall", "-Wextra", "-Werror", "-Wunused-parameter", "-fsanitize=address,undefined"]
+    handler = tmp_path / "handler"
+    r = subprocess.run(["gcc", *flags, "-I", str(stub), "-I", str(stub / "openair2/E2AP/RAN_FUNCTION/CUSTOMIZED"), "-I", str(tmp_path / "inc"),
+                        str(tmp_path / "ran_func_slice.c"), str(GNB / "test" / "test_slice_handler.c"), "-o", str(handler), "-lm"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    srv = tmp_path / "ctrl_server"
+    r = subprocess.run(["gcc", "-std=gnu11", "-I", str(GNB / "src"), str(GNB / "test" / "ctrl_server.c"), str(GNB / "src" / "nr_dl_ctrl_state.c"), "-o", str(srv), "-lm"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    port = free_port()
+    proc = subprocess.Popen([str(srv), str(port)], stdout=subprocess.PIPE, text=True)
+    try:
+        assert proc.stdout.readline().strip() == "ready"
+        r = subprocess.run([str(handler), str(port)], capture_output=True, text=True, timeout=60)
+    finally:
+        proc.kill()
+        proc.wait()
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "failures=0" in r.stdout
+
+
 def test_client_measure_reports_slices(server):
     assert client(server, "policy", "slice").returncode == 0
     assert client(server, "assoc", "1001", "1").returncode == 0

@@ -35,11 +35,11 @@ has received the fewest relative to its UE weight. As in `wrr`, each slot normal
 one UE, retransmissions and control-element-only UEs are served first and are not charged
 to the counters. A slice that had little or nothing to send does not collect credit
 without limit: whenever a slice has data, its counter is raised if needed so that it is at
-most 2000 resource blocks (of its own weight) behind the other slices that have data.
+most 2000 resource blocks (of its own weight) behind the slice that is furthest ahead.
 Without this bound a slice that sent at a low rate for a while took most of the slots for
 the next minute (see the results in `SLICING_LIVE_TEST.md`). The same bound applies to a UE
-against the other UEs with data in its slice (against all UEs for `wrr`), so a UE that
-attaches or reconnects does not take every slot until it has caught up with its peers. The
+against the UE that is furthest ahead in its slice (in all UEs for `wrr`), so UEs that
+attach, reconnect or come back together do not take every slot until they have caught up. The
 credit is kept apart from the counters: the grant counters in `status` and `measure` count
 resource blocks that were really granted. Design and rationale: `SLICING_DESIGN.md`.
 
@@ -97,6 +97,35 @@ version number in `status` increases with every accepted change. RNTIs belong to
 one attachment: when a UE disconnects its settings are dropped, so apply weights
 again after UEs re-register.
 
+## Standard slice service model
+
+The gNB also answers the standard FlexRIC slice service model (ran function 145), so an
+xApp written for it needs no scheduler-specific words. `gnb/patches/0004-e2-slice-control.patch`
+replaces the handler that only printed the message; the translation is in
+`gnb/src/nr_dl_ctrl_slice_sm.h` and ends in the same local endpoint and commands as above.
+
+| Message | Becomes |
+| --- | --- |
+| ADD, DL slice with NVS capacity `p` (0 < p <= 1) | `SLICE id WEIGHT round(p * 1000)`, `SLICE id CAP 0` |
+| ADD, DL slice STATIC `pos_low`..`pos_high` | `SLICE id WEIGHT 1000`, `SLICE id CAP (pos_high - pos_low + 1)`; the width is a limit on the slice, the position is not used |
+| ADD with no slice | `SLICEDEL 0` to `7` |
+| DEL, DL ids | `SLICEDEL id` (weight, cap and counters back to the defaults; associations and S-NSSAI rules of that slice removed) |
+| UE association, `rnti` and `dl_id` | `ASSOC rnti dl_id` |
+
+A message is checked completely before its first command is sent, so one invalid slice
+changes nothing. Refused: other algorithms (NVS rate, SCN19, EDF), uplink slices, ids above 7,
+a static width outside 5 to 275, more than 8 slices or 32 UEs in one message. The reason is
+written to the gNB log (`[E2 Agent]: SLICE CONTROL ...`); as for the MAC messages, the
+acknowledgement to the xApp only says that the gNB received the message. An association is
+applied UE by UE and stops at the first one the endpoint refuses (an unknown RNTI), which the
+log names. The stock slice example of FlexRIC sends static slices of 4, 4 and 5 resource
+blocks and is therefore refused as a whole.
+
+The indication reports the real table: the policy name as the scheduler name, each configured
+slice as an NVS capacity slice with `pct_reserved = weight / 1000` (its cap has no field in
+the message), and the slice of every connected UE. The reader needs the control endpoint of
+the same gNB and reports nothing when it does not answer.
+
 ## Control over E2
 
 `xapp_sched_ctrl` (run on the core node, see `DEPLOYMENT.md`) sends a MAC service
@@ -113,6 +142,7 @@ The message has two 32-bit words, packed as follows.
 | `slice-cap <0..7> <0\|5..275>` | `0x5343<slice>06` | cap |
 | `assoc <rnti> <0..7\|none>` | `0x5343<slice>07` (`ff` = remove) | `rnti << 16` |
 | `nssai-map <sst> <sd\|none> <0..7\|none>` | `0x5343<slice>08` (`ff` = delete) | `sst << 24 \| sd` |
+| `slice-del <0..7>` | `0x5343<slice>09` | 0 |
 
 `<slice>` is one byte in bits 8 to 15 of the header word; the first four commands have 0
 there, so words built before the slice commands existed keep their meaning. `policy slice`
@@ -251,7 +281,7 @@ Not done yet, and required before relying on it:
 - Building the gNB image (the stand-in headers in `gnb/test/oai_stub` are transcribed from the pinned source; the real compile happens in the image build).
 - Longer and repeated runs, other channel conditions and more than four UEs: the live results above come from three reservations, with two and four UEs, AWGN. Single runs of 20 s were used for most four-UE rows.
 - The E2 path is confirmed on one reservation: policy, weight, cap and reset sent by `xapp_sched_ctrl` through the RIC were applied by the gNB (read back with `sched-ctl.py status`), a command for an unknown RNTI was refused by the gNB while the xApp still reported it as delivered, and an invalid word was rejected by the xApp. It has not been tried with several gNBs or with the E42 subscription load of the monitoring xApps running at the same time.
-- Slice scheduling (policy `slice`, associations, S-NSSAI rules): measured on a live gNB with four UEs (`SLICING_LIVE_TEST.md`, section 4), including the bounded credit of slices and UEs and the slice-level cap. A UE that attaches with a new RNTI during a run was not tested on the cell, and whether two different S-NSSAIs work with the minimal core is not verified. The standard FlexRIC slice message is not mapped.
+- Slice scheduling (policy `slice`, associations, S-NSSAI rules): measured on a live gNB with four UEs (`SLICING_LIVE_TEST.md`, section 4), including the bounded credit of slices and UEs and the slice-level cap. A UE that attaches with a new RNTI during a run was not tested on the cell, and whether two different S-NSSAIs work with the minimal core is not verified. The standard FlexRIC slice message is mapped (section below); it was tested on the host only.
 - Uplink scheduling is not controlled. Handovers and multi-cell coordination are outside scope.
 
 The sources are compiled into the OAI gNB and keep the gNB's licensing in mind

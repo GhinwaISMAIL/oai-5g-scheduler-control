@@ -7,6 +7,7 @@
  *   xapp_sched_ctrl cap <rnti> <0|5..275>          resource blocks per slot, 0 = no cap
  *   xapp_sched_ctrl slice-weight <0..7> <1..65535>
  *   xapp_sched_ctrl slice-cap <0..7> <0|5..275>
+ *   xapp_sched_ctrl slice-del <0..7>               slice back to its defaults, members fall back to slice 0
  *   xapp_sched_ctrl assoc <rnti> <0..7|none>       slice of a UE, none removes the association
  *   xapp_sched_ctrl nssai-map <sst> <sd|none> <0..7|none>   slice for UEs with that S-NSSAI (sd in hex)
  *   xapp_sched_ctrl reset
@@ -39,10 +40,11 @@ static void usage(const char *prog)
           "       %s cap <rnti> <0|5..275>\n"
           "       %s slice-weight <0..7> <1..65535>\n"
           "       %s slice-cap <0..7> <0|5..275>\n"
+          "       %s slice-del <0..7>\n"
           "       %s assoc <rnti> <0..7|none>\n"
           "       %s nssai-map <sst> <sd|none> <0..7|none>\n"
           "       %s reset\n",
-          prog, prog, prog, prog, prog, prog, prog, prog);
+          prog, prog, prog, prog, prog, prog, prog, prog, prog);
 }
 
 int main(int argc, char *argv[])

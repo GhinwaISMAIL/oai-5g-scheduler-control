@@ -23,7 +23,7 @@ through the same local endpoint as the existing commands.
 | Each scheduler candidate carries the S-NSSAI (`sst`, `sd`) of the UE's first DRB; `{0, 0xFFFFFF}` when the UE has none | `gNB_scheduler_dlsch.c` (candidate collection), `nr_dl_candidate_t.nssai` |
 | That value comes from the PDU session set up by the core | `rrc_gNB.c` (`drb_info.nssai = pdu->nssai`), `mac_rrc_dl_handler.c` |
 | The UE takes `nssai_sst` and `nssai_sd` per PDU session | `openair3/UICC/pdu_session.c`, `usim_interface.c` |
-| The standard E2 slice control handler only prints and acknowledges; the slice reader returns random data | `ran_func_slice.c` |
+| The standard E2 slice control handler only prints and acknowledges; the slice reader returns random data (both replaced in step C) | `ran_func_slice.c` |
 
 So slice membership can come from the RNTI (set by a command) or from the NSSAI
 (set by the core), and the existing hook already receives both.
@@ -59,14 +59,17 @@ the largest free block) and changes only the order and the accounting:
    and do not count against a cap.
 5. Credit is bounded. Whenever a slice has a UE with new data, its counter is raised, never
    lowered, so that its deficit is at most `NR_CTRL_SLICE_CREDIT_RBS` (2000 resource blocks, in
-   units of its own weight) below the lowest deficit of the other backlogged slices. Without a
+   units of its own weight) below the highest deficit of the other backlogged slices. Without a
    bound, a slice that sends little for a while falls behind and then takes every slot until it has
    caught up: in the first live run this gave a slice of weight 1000 about 75 % of the cell against
    another of weight 1000 for the whole run. The first version only acted after 500 consecutive
    calls without data, which a slice with sparse data never reaches.
 6. The same bound applies to a UE: a UE with new data is raised so that its deficit is at most
-   `NR_CTRL_UE_CREDIT_RBS` (2000 resource blocks, in units of its own weight) below the lowest
-   deficit of the other UEs with new data in its slice (in all UEs for `wrr`). A UE that attaches,
+   `NR_CTRL_UE_CREDIT_RBS` (2000 resource blocks, in units of its own weight) below the highest
+   deficit of the other UEs with new data in its slice (in all UEs for `wrr`). The reference is the
+   highest, not the lowest: with the lowest, two UEs (or slices) that were behind together were not
+   raised against each other and held the leader off until they had caught up (found with the host
+   tests of step C: two idle UEs returning took 87.5 % for 4000 calls). A UE that attaches,
    or reconnects with a new RNTI, therefore gets a burst of at most that size and then its weight.
    Credit is virtual: it is stored apart from the granted resource blocks, and only the order of
    visit uses it. The counters that `status` and `measure` show, for UEs and for slices, are real
@@ -112,6 +115,7 @@ without this feature ignores the new words like any other non-scheduler word.
 | `slice-cap <id> <c>` | 6 | slice id | cap |
 | `assoc <rnti> <id\|none>` | 7 | slice id, 0xFF = remove | rnti << 16 |
 | `nssai-map <sst> <sd\|none> <id\|none>` | 8 | slice id, 0xFF = delete | sst << 24 \| sd (24 bits) |
+| `slice-del <id>` | 9 | slice id | 0 |
 
 As for the existing commands, an acknowledgement in the xApp only means the gNB received the
 message; `sched-ctl.py status` is the check.
@@ -133,6 +137,9 @@ Host side, in `gnb/test/test_ctrl.c` and `tests/`:
 - Membership: precedence of `ASSOC` over `NSSAIMAP` over slice 0; a disconnecting UE loses its association; a rule survives.
 - Retransmissions are still served first and the counters are not charged for them.
 - E2: round trip of every new word, rejection of out-of-range values, old words unchanged.
+- Credit of groups: two or three UEs (or slices) that were idle together return without holding the others off.
+- Standard slice message: every translation and refusal, a message with one invalid part changes nothing, the
+  reply of `GET` read back for the indication, and the handler run against the real command parser under AddressSanitizer.
 - The existing ThreadSanitizer, AddressSanitizer and UBSan runs with a control thread active, and the OAI
   build-flags test that compiles the handler with `-Werror`.
 
@@ -156,8 +163,12 @@ B. Membership by NSSAI: a second S-NSSAI (SST 2 without `sd`) in the gNB `snssai
    host tests of the generated files. The scheduler side is the `NSSAIMAP` rule above. Run on a reservation with two UEs: the minimal
    core, with one SMF and one UPF, serves both S-NSSAIs (`SLICING_LIVE_TEST.md`, run 9).
 
-C. Standard FlexRIC slice message: a handler in `ran_func_slice.c` that maps slice add and association to
-   the commands above. Requires the FlexRIC slice message definitions, which have not been read.
+C. Standard FlexRIC slice message: `gnb/patches/0004-e2-slice-control.patch` replaces the handler in
+   `ran_func_slice.c`; the translation (`nr_dl_ctrl_slice_sm.h`) maps ADD (NVS capacity as weight,
+   STATIC width as cap), DEL (new command `SLICEDEL`) and UE association to the commands above and checks a
+   whole message before sending anything; the indication reports the real slices and UEs instead of random
+   data. Tested on the host with the real command parser and the handler under AddressSanitizer
+   (`SCHEDULER_CONTROL.md`, section on the standard slice service model). Not yet run on a reservation.
 
 ## Decisions to confirm
 

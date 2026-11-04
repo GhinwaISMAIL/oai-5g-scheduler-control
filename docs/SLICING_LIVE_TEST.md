@@ -261,6 +261,41 @@ Part 2, rule deleted during traffic: `sched-ctl.py nssai-map 2 none -` on cell1 
 Expect `U2` in slice 0 `via default`, still with `nssai 2:ffffff`, and the shares unchanged (slice 0 has
 weight 1000, like slice 2). Restoring the rule (`nssai-map 2 none 2`) moves `U2` back to slice 2.
 
+**Run 10, credit of two UEs that return together.** Policy `wrr`; `U1` and `U2` receive 15 Mbit/s for
+100 s, `U3` and `U4` start after 60 s. Before the credit bound compared against the furthest-ahead UE, the two
+late UEs took about 85 % of the cell for a long time. Not run yet.
+```bash
+~/x.sh policy wrr
+DUR=100 ~/dl.sh q10a $IP1 $IP2
+~/chk.sh q10a
+echo "=== phase 1 started: start the cell1 command NOW, U3 and U4 start in 60 s ==="
+sleep 60
+DUR=60 ~/dl.sh q10b $IP3 $IP4
+~/chk.sh q10b
+```
+On cell1, as soon as the first marker appears:
+```bash
+cd /local/repository
+sleep 62; python3 bin/sched-ctl.py measure --seconds 20; python3 bin/sched-ctl.py status | head -9
+```
+Expect about 25 % for each UE.
+
+**Run 11, standard slice message.** The stock slice xApp of FlexRIC sends an ADD, a DEL and an association
+and reads the indication. Not run yet. On the core node:
+```bash
+~/x.sh policy slice
+X=$(find /opt/oai-src -name xapp_slice_moni_ctrl -type f | head -1); echo $X
+$X
+```
+On cell1, in a second terminal, before starting the xApp: `sudo docker logs -f ric5g-gnb-cell1 2>&1 | grep --line-buffered "SLICE CONTROL"`.
+Expect in the gNB log:
+- `SLICE CONTROL ADD refused: static slice width must be 5..275 resource blocks, slice (0)`: the example's slices are 4, 4 and 5 resource blocks wide, so the whole message is refused and nothing changes;
+- `SLICE CONTROL DEL applied (1 commands)` (slice 2);
+- `SLICE CONTROL ASSOC applied (1 commands)`: the xApp takes the RNTI of the first UE from the indication, which now holds the real table, and puts it in slice 5.
+
+Then `python3 bin/sched-ctl.py status` on cell1 shows that UE in slice 5 `via rnti`. A valid ADD is covered by
+the host tests only, because the stock example cannot send one.
+
 At the end of the reservation: `~/x.sh reset`.
 
 ## 4. Results
@@ -296,6 +331,6 @@ it was not checked.
 
 Limits: one 20 s window per run; the total throughput of a run varies by about 10 % at the same
 resource-block rate, so judge by the resource-block shares; RFsim with the same channel for all UEs.
-Not tested on the cell: a UE that attaches or reconnects with a new RNTI during a run (run 8
+Not tested on the cell: a valid standard ADD message, a UE that attaches or reconnects with a new RNTI during a run (run 8
 covers a UE that starts sending late; the host tests cover the new RNTI), more than one UE per
 S-NSSAI in the core (run 9 had one), and the standard FlexRIC slice message.

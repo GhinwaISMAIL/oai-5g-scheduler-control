@@ -93,6 +93,7 @@ python3 bin/sched-ctl.py cap <rnti> 30              # most resource blocks per s
 python3 bin/sched-ctl.py slice 1 weight 3000        # slice share (slices 0..7, 0 is the default)
 python3 bin/sched-ctl.py slice 1 cap 20             # most resource blocks the slice takes per slot
 python3 bin/sched-ctl.py assoc <rnti> 1             # put a UE in slice 1
+python3 bin/sched-ctl.py slice-del 1                # slice 1 back to its defaults, its members fall back to slice 0
 python3 bin/sched-ctl.py nssai-map 1 none 2         # UEs with this S-NSSAI go to slice 2
 python3 bin/sched-ctl.py map --containers ric5g-ue-cell1-1,ric5g-ue-cell1-2   # RNTI of each UE container
 python3 bin/sched-ctl.py reset                      # back to the stock policy
@@ -143,7 +144,8 @@ among the UEs that have data in the same slot, not a guaranteed throughput. Upli
 controlled. RFsim does not provide physical RF coverage.
 Slices: 8 slices, one UE per slot, membership by RNTI association, then by the S-NSSAI the MAC
 reports (SST 1 without SD for all UEs by default). Two different S-NSSAIs are available with `second_slice` (run on a reservation with two UEs, see `docs/SLICING_LIVE_TEST.md`).
-Not tested: a UE that attaches with a new RNTI during a run, and the standard FlexRIC slice message.
+The standard FlexRIC slice message (ADD, DEL, UE association, indication) is translated to the same commands (`docs/SCHEDULER_CONTROL.md`); host-tested, not yet run on a reservation.
+Not tested on the cell: a UE that attaches with a new RNTI during a run.
 
 ## Layout
 

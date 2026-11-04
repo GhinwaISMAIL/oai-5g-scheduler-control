@@ -150,14 +150,14 @@ void nr_ctrl_slice_activity(nr_ctrl_state_t *st, const uint8_t backlogged[NR_CTR
   for (int i = 0; i < NR_CTRL_MAX_SLICE; i++) {
     if (!backlogged[i])
       continue;
-    double lowest = -1.0; /* lowest deficit among the other backlogged slices */
+    double highest = -1.0; /* highest deficit among the other backlogged slices */
     for (int j = 0; j < NR_CTRL_MAX_SLICE; j++)
-      if (j != i && backlogged[j] && (lowest < 0.0 || deficit[j] < lowest))
-        lowest = deficit[j];
-    if (lowest < 0.0)
+      if (j != i && backlogged[j] && deficit[j] > highest)
+        highest = deficit[j];
+    if (highest < 0.0)
       continue; /* alone: nobody to be compared with */
     nr_ctrl_slice_t *sl = &st->slice[i];
-    double floor_rbs = lowest * (double)sl->weight - (double)NR_CTRL_SLICE_CREDIT_RBS;
+    double floor_rbs = highest * (double)sl->weight - (double)NR_CTRL_SLICE_CREDIT_RBS;
     double have = (double)(sl->granted_rbs + sl->credit_rbs);
     if (floor_rbs > have)
       sl->credit_rbs += (uint64_t)(floor_rbs - have);
@@ -173,16 +173,16 @@ void nr_ctrl_ue_activity(nr_ctrl_state_t *st, const uint16_t *rnti, const uint8_
   for (int i = 0; i < n; i++)
     deficit[i] = nr_ctrl_deficit(st, rnti[i]);
   for (int i = 0; i < n; i++) {
-    double lowest = -1.0; /* lowest deficit among the other UEs of the group */
+    double highest = -1.0; /* highest deficit among the other UEs of the group */
     for (int j = 0; j < n; j++)
-      if (j != i && group[j] == group[i] && (lowest < 0.0 || deficit[j] < lowest))
-        lowest = deficit[j];
-    if (lowest < 0.0)
+      if (j != i && group[j] == group[i] && deficit[j] > highest)
+        highest = deficit[j];
+    if (highest < 0.0)
       continue;
     nr_ctrl_ue_t *u = get_or_add(st, rnti[i]);
     if (!u)
       continue;
-    double floor_rbs = lowest * (double)nr_ctrl_weight_of(st, rnti[i]) - (double)NR_CTRL_UE_CREDIT_RBS;
+    double floor_rbs = highest * (double)nr_ctrl_weight_of(st, rnti[i]) - (double)NR_CTRL_UE_CREDIT_RBS;
     double have = (double)(u->granted_rbs + u->credit_rbs);
     if (floor_rbs > have)
       u->credit_rbs += (uint64_t)(floor_rbs - have);
@@ -461,6 +461,26 @@ int nr_ctrl_handle(nr_ctrl_state_t *st, const char *cmd, const nr_ctrl_ue_view_t
     } else {
       return reply_err(reply, reply_size, "unknown_command");
     }
+    st->version++;
+    return reply_ok(st, reply, reply_size);
+  }
+
+  if (!strcmp(tok[0], "SLICEDEL") && nt == 2) {
+    unsigned long id;
+    if (!parse_ulong(tok[1], 10, NR_CTRL_MAX_SLICE - 1, &id))
+      return reply_err(reply, reply_size, "bad_slice");
+    memset(&st->slice[id], 0, sizeof(st->slice[id]));
+    st->slice[id].weight = NR_CTRL_DEFAULT_WEIGHT;
+    for (int i = 0; i < st->n_ue; i++)
+      if (st->ue[i].assoc && st->ue[i].slice == id) {
+        st->ue[i].assoc = 0;
+        st->ue[i].slice = 0;
+      }
+    int w = 0;
+    for (int i = 0; i < st->n_rule; i++)
+      if (st->rule[i].slice != id)
+        st->rule[w++] = st->rule[i];
+    st->n_rule = w;
     st->version++;
     return reply_ok(st, reply, reply_size);
   }

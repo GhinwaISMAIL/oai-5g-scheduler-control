@@ -11,7 +11,9 @@
  *   WEIGHT <rnti|*> <1..1000000>      relative downlink share (wshare)
  *   CAP <rnti> <0|5..275>             most resource blocks per slot, 0 = none
  *   SLICE <id> WEIGHT <1..1000000>    relative share of a slice (policy slice)
- *   SLICE <id> CAP <0|5..275>         most resource blocks per grant to a UE of the slice
+ *   SLICE <id> CAP <0|5..275>         most resource blocks all UEs of the slice take together in one call
+ *   SLICEDEL <id>                     slice back to its defaults (weight, no cap, counters), its associations
+ *                                     and S-NSSAI rules removed, so its UEs fall back to slice 0
  *   ASSOC <rnti> <id|->               puts a UE in a slice (id 0..7), '-' removes the association
  *   NSSAIMAP <sst> <sd|none> <id|->   slice for UEs with that S-NSSAI (sd in hex), '-' deletes the rule
  *   RESET                             stock proportional-fair, state cleared
@@ -134,7 +136,7 @@ int nr_ctrl_slice_cap(const nr_ctrl_state_t *st, int slice);
 void nr_ctrl_account_slice(nr_ctrl_state_t *st, int slice, int rbs);
 /* Called once per scheduler call with the slices that have a UE with new data.  The credit of a
  * backlogged slice is raised, never lowered, so that its deficit is at most NR_CTRL_SLICE_CREDIT_RBS
- * (of its own weight) below the lowest deficit of the other backlogged slices.  A slice that had
+ * (of its own weight) below the highest deficit of the other backlogged slices.  A slice that had
  * little or nothing to send for a while can therefore burst by that much, but cannot take every slot
  * until it has caught up with what it did not use. */
 void nr_ctrl_slice_activity(nr_ctrl_state_t *st, const uint8_t backlogged[NR_CTRL_MAX_SLICE]);
