@@ -1,13 +1,8 @@
 # Slice-aware downlink scheduling: design
 
-Status: step A (below) is implemented and tested on the host, on branch `slicing`. A first
-version was run on a live gNB with four UEs (`SLICING_LIVE_TEST.md`, section 5); it showed two
-points that this document now reflects: the credit of a slice is bounded (policy item 5) and the
-slice cap limits the slice as a whole (policy item 4). The revised version was run live with the
-expected shares (`SLICING_LIVE_TEST.md`, section 6). That run also showed that a UE that reconnects
-was served first in its slice for minutes; the credit of a UE is now bounded in the same way
-(policy item 6) and the credit is kept apart from the grant counters. This last change is tested
-on the host; its live run is prepared (`SLICING_LIVE_TEST.md`, run 8). Steps B and C are not started.
+Status: step A (below) is implemented on branch `slicing`, tested on the host and run on a live
+gNB with four UEs with the expected shares (`SLICING_LIVE_TEST.md`, section 4). Steps B and C are
+not started.
 
 ## Goal
 

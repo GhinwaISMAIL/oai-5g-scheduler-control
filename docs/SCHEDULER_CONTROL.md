@@ -66,12 +66,9 @@ dropped when the UE disconnects; rules stay until `reset`.
 
 Status of this feature: tested on the host (`gnb/test`, `tests/`), including the property that
 a slice share does not change with the number of UEs in the slice or with how many of them have
-data. A first version was run on a live single-cell gNB with four UEs (results, including the
-two defects they showed, in `SLICING_LIVE_TEST.md`, section 5). The version in this branch
-(bounded credit of a slice, slice-level cap) was run on the same set-up and gave the expected
-shares (section 6). The bound on the credit of a single UE (a UE that attaches or reconnects) and
-the separation of credit and grant counters were added after that run; they are tested on the
-host and have a live regression in `SLICING_LIVE_TEST.md`, run 8.
+data. It was also run on a live single-cell gNB with four UEs and gave the expected shares for
+slice weights, UE weights, the slice cap, membership by RNTI and by S-NSSAI, and the bounded
+credit of slices and UEs (`SLICING_LIVE_TEST.md`, section 4).
 
 Meaning of the numbers: a weight is a share of the resource blocks scheduled
 *among UEs that are backlogged in the same slot*. It is not a guaranteed
@@ -254,7 +251,7 @@ Not done yet, and required before relying on it:
 - Building the gNB image (the stand-in headers in `gnb/test/oai_stub` are transcribed from the pinned source; the real compile happens in the image build).
 - Longer and repeated runs, other channel conditions and more than four UEs: the live results above come from three reservations, with two and four UEs, AWGN. Single runs of 20 s were used for most four-UE rows.
 - The E2 path is confirmed on one reservation: policy, weight, cap and reset sent by `xapp_sched_ctrl` through the RIC were applied by the gNB (read back with `sched-ctl.py status`), a command for an unknown RNTI was refused by the gNB while the xApp still reported it as delivered, and an invalid word was rejected by the xApp. It has not been tried with several gNBs or with the E42 subscription load of the monitoring xApps running at the same time.
-- Slice scheduling (policy `slice`, associations, S-NSSAI rules): measured on a live gNB with four UEs (`SLICING_LIVE_TEST.md`, sections 5 and 6), including the bounded credit of a slice and the slice-level cap. The bounded credit of a single UE is tested on the host and has a live run prepared (run 8), and whether two different S-NSSAIs work with the minimal core is not verified. The standard FlexRIC slice message is not mapped.
+- Slice scheduling (policy `slice`, associations, S-NSSAI rules): measured on a live gNB with four UEs (`SLICING_LIVE_TEST.md`, section 4), including the bounded credit of slices and UEs and the slice-level cap. A UE that attaches with a new RNTI during a run was not tested on the cell, and whether two different S-NSSAIs work with the minimal core is not verified. The standard FlexRIC slice message is not mapped.
 - Uplink scheduling is not controlled. Handovers and multi-cell coordination are outside scope.
 
 The sources are compiled into the OAI gNB and keep the gNB's licensing in mind
