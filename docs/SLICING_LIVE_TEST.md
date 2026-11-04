@@ -1,6 +1,6 @@
 # Live test of slice-aware scheduling
 
-Procedure and results of the live runs of the `slice` policy on a reservation with four UEs
+Procedure and results of the live runs of the `slice` policy on a reservation with four UEs (run 9: two UEs)
 (branch `slicing`). Section 1 deploys the branch, section 2 prepares the variables and helper
 scripts, section 3 lists the runs with the expected values, section 4 holds the results.
 
@@ -239,32 +239,35 @@ sleep 62; python3 bin/sched-ctl.py measure --seconds 20; python3 bin/sched-ctl.p
 Expect about 25 % for each UE, `U4` included. The counters of `U4` stay far below the others; they
 count real grants.
 
-**Run 9, two S-NSSAIs in the core.** Needs a reservation with `second_slice` on and four UEs
-(`ues_per_cell` 4): UEs 1 and 2 attach with SST 1, UEs 3 and 4 with SST 2. Not run yet.
+**Run 9, two S-NSSAIs in the core.** Needs a reservation with `second_slice` on. It was run with two UEs:
+`U1` attaches with SST 1 and `U2` with SST 2 (with four UEs, UEs 1 and 2 have SST 1 and UEs 3 and 4 SST 2).
 
-First check the attachment (cell1): `python3 bin/sched-ctl.py status` must list all four UEs, with
-`nssai 1:ffffff` for `U1` and `U2` and `nssai 2:ffffff` for `U3` and `U4`. If a UE is missing, or has
-no tunnel address (`ip -4 addr show oaitun_ue1` in its container), the core did not accept the second
-slice: look at `sudo docker logs ric5g-oai-amf` and `ric5g-oai-smf` for `NSSAI` and stop there; that is
-the finding.
+First check the attachment: both UEs must have a tunnel address (`ip -4 addr show oaitun_ue1` in the UE
+container) and answer a ping through it. If one does not, the core did not accept the second slice: look at
+`sudo docker logs ric5g-oai-amf` and `ric5g-oai-smf` for `NSSAI` and stop there; that is the finding.
 
+Part 1, membership by S-NSSAI:
 ```bash
 ~/x.sh policy slice
 ~/x.sh nssai-map 1 none 1; ~/x.sh nssai-map 2 none 2
 ~/x.sh slice-weight 1 3000; ~/x.sh slice-weight 2 1000
-~/dl.sh q9
+~/dl.sh q9 $IP1 $IP2
 ```
-Expect every UE `via nssai`, slices 75 : 25 and UEs 37.5 / 37.5 / 12.5 / 12.5 %. Then, during the traffic,
-`~/x.sh nssai-map 2 none -`: `U3` and `U4` fall back to slice 0 (`default`) and slice 0 takes 25 %
-at its weight of 1000, as before.
+On cell1, after 10 s: `python3 bin/sched-ctl.py status` and `measure --seconds 20`. Expect `U1` in slice 1 with
+`nssai 1:ffffff` and `U2` in slice 2 with `nssai 2:ffffff`, both `via nssai`, and shares of 75 : 25.
+The `slice`, `via` and `nssai` columns of `status` appear once a slice weight or a rule is set.
+
+Part 2, rule deleted during traffic: `sched-ctl.py nssai-map 2 none -` on cell1 while `dl.sh` is running.
+Expect `U2` in slice 0 `via default`, still with `nssai 2:ffffff`, and the shares unchanged (slice 0 has
+weight 1000, like slice 2). Restoring the rule (`nssai-map 2 none 2`) moves `U2` back to slice 2.
 
 At the end of the reservation: `~/x.sh reset`.
 
 ## 4. Results
 
-Image `ghinwa555/oai-gnb-ctrl:70508eba-31ef394cea46`, single cell, RFsim, four UEs with SST 1 and no
-SD, AWGN, 20 s windows. In every window the version was the same at both ends and every UE received
-traffic.
+Image `ghinwa555/oai-gnb-ctrl:70508eba-31ef394cea46`, single cell, RFsim, AWGN, 20 s windows; runs 0 to 8
+with four UEs with SST 1 and no SD, run 9 with two UEs (SST 1 and SST 2). In every window the version was the
+same at both ends and every UE received traffic.
 
 | Run | Setup | Expected | Measured |
 | --- | --- | --- | --- |
@@ -275,16 +278,24 @@ traffic.
 | 6 | rule `sst=1 sd=none -> 2` and `assoc U1 1` | `U1` 50 %, others 16.7 % | **50.0**; 16.6 / 16.7 / 16.7 %; `U1` `via rnti`, others `via nssai` |
 | 7 | slice 1 sends 1 Mbit/s for 60 s, then all at 15 Mbit/s | 50 : 50 | **50.0 : 50.0**; `U1` 50.0 %, others 16.6 / 16.7 / 16.7 % |
 | 8 | `wrr`, `U4` starts after 60 s | 25 % each | **25.0 / 25.0 / 25.0 / 25.0** %; `U4` at 122,996 granted RBs, the others about 530,000 |
+| 9 | two UEs, SST 1 and SST 2, rules to slices 1 and 2, weights 3000 : 1000 | 75 : 25 | **74.7 : 25.3**; `nssai 1:ffffff` and `2:ffffff`, both `via nssai`; 17.47 and 6.62 Mbit/s |
+| 9 | rule for SST 2 deleted during traffic | `U2` in slice 0 `via default`, 75 : 25 | `U2` slice 0 `via default`, `nssai 2:ffffff` kept, version 7 to 8; windows 66.7 : 33.3, then 74.7 : 25.3 |
+| 9 | rule restored | `U2` in slice 2, 75 : 25 | **72.2 : 27.8** |
 
-All shares are within 0.4 point of the target (run 0 is the stock policy). In runs 7, 4, 5, 1 and 6
+Runs 0 to 8 are within 0.4 point of the target (run 0 is the stock policy). In runs 7, 4, 5, 1 and 6
 the sum of the grant counters of the UEs equals the sum of the slice counters. The `granted_rbs`
 columns count real grants; the credit that the bounds add is kept apart and only orders the UEs.
 
 Not explained: in run 8 `U4` received 2.06 Mbit/s for the same resource blocks as the others
-(about 3.35 Mbit/s); it did not recur in the other runs.
+(about 3.35 Mbit/s); it did not recur in the other runs. In run 9 the first window after the rule
+deletion gave 66.7 : 33.3 instead of 75 : 25; with the same slices and rule state in the next traffic
+session the shares were 74.7 : 25.3 and 72.2 : 27.8, so it is not specific to slice 0. All windows that
+fell short (66.7, 69.5, 72.2, 74.0) are below the target for the heavier slice; this is consistent with a
+work-conserving scheduler giving the slot to the other UE while the heavier UE has little queued, but
+it was not checked.
 
 Limits: one 20 s window per run; the total throughput of a run varies by about 10 % at the same
 resource-block rate, so judge by the resource-block shares; RFsim with the same channel for all UEs.
 Not tested on the cell: a UE that attaches or reconnects with a new RNTI during a run (run 8
-covers a UE that starts sending late; the host tests cover the new RNTI), two different S-NSSAIs in
-the core, and the standard FlexRIC slice message.
+covers a UE that starts sending late; the host tests cover the new RNTI), more than one UE per
+S-NSSAI in the core (run 9 had one), and the standard FlexRIC slice message.

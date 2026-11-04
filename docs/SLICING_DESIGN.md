@@ -153,9 +153,8 @@ A. Scheduler and control (host-testable): the state and parser in `nr_dl_ctrl_st
 B. Membership by NSSAI: a second S-NSSAI (SST 2 without `sd`) in the gNB `snssaiList`, in the AMF, SMF and
    UPF configuration, in the generated subscribers, and a per-UE `nssai_sst` in the UE configuration. It is
    switched on by the profile parameter `second_slice` (off by default; see `DEPLOYMENT.md`) and covered by
-   host tests of the generated files. The scheduler side is the `NSSAIMAP` rule above. Not yet run on a
-   reservation: whether the minimal core, with one SMF and one UPF, serves two S-NSSAIs
-   (`SLICING_LIVE_TEST.md`, run 9).
+   host tests of the generated files. The scheduler side is the `NSSAIMAP` rule above. Run on a reservation with two UEs: the minimal
+   core, with one SMF and one UPF, serves both S-NSSAIs (`SLICING_LIVE_TEST.md`, run 9).
 
 C. Standard FlexRIC slice message: a handler in `ran_func_slice.c` that maps slice add and association to
    the commands above. Requires the FlexRIC slice message definitions, which have not been read.

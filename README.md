@@ -142,7 +142,7 @@ One cell, up to the UEs a single `nr-softmodem` serves. A weight is a share of t
 among the UEs that have data in the same slot, not a guaranteed throughput. Uplink scheduling is not
 controlled. RFsim does not provide physical RF coverage.
 Slices: 8 slices, one UE per slot, membership by RNTI association, then by the S-NSSAI the MAC
-reports (SST 1 without SD for all UEs by default). Two different S-NSSAIs are available with `second_slice` (host-tested, not yet run on a reservation).
+reports (SST 1 without SD for all UEs by default). Two different S-NSSAIs are available with `second_slice` (run on a reservation with two UEs, see `docs/SLICING_LIVE_TEST.md`).
 Not tested: a UE that attaches with a new RNTI during a run, and the standard FlexRIC slice message.
 
 ## Layout

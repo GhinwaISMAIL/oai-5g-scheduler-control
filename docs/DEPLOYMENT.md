@@ -250,6 +250,6 @@ sudo SECOND_SLICE=1 bash bin/node-setup.sh core 0 1 4 uniform AWGN >> /local/log
 sudo SECOND_SLICE=1 GNB_CTRL=1 bash bin/node-setup.sh cell 1 1 4 uniform AWGN >> /local/logs/setup.log 2>&1   # cell node
 ```
 
-Check that the UEs registered with the right slice: `python3 bin/sched-ctl.py status` shows the S-NSSAI of
-every UE in the `nssai` column (`1:ffffff` or `2:ffffff`). Procedure and expected values:
+Check that the UEs registered with the right slice: once a slice weight or a rule is set,
+`python3 bin/sched-ctl.py status` shows the S-NSSAI of every UE in the `nssai` column (`1:ffffff` or `2:ffffff`). Procedure and expected values:
 `SLICING_LIVE_TEST.md`, run 9.
