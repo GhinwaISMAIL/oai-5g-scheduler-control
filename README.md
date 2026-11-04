@@ -1,116 +1,153 @@
 # oai-5g-scheduler-control
 
-Single-cell OAI 5G Standalone testbed for scheduler-control research, with a
-complete software 5G protocol stack and FlexRIC near-RT RIC/xApp integration.
-The default reservation uses **two physical hosts, one gNB and two OAI UEs**.
+Single-cell OAI 5G SA testbed on POWDER with a controllable downlink MAC scheduler.
+The scheduling policy and the sharing of resource blocks (PRBs) between UEs are
+changed at run time, from the cell node or from an xApp over E2, and read back from the gNB.
+The RAN is simulated at the PHY layer (RFsim); the core network, control plane and user plane
+are real.
 
-The UE and gNB execute the NR PHY/MAC/RLC/PDCP/RRC and NAS procedures. RFsim
-transports IQ samples instead of over-the-air radios. This is a full software
-network, not a packet-only model; it does not provide physical RF coverage or
-commercial-device connectivity without a separate radio deployment.
+Instantiating the POWDER profile brings up the whole system: core network, near-RT RIC, one
+cell node with its gNB and UEs.
 
 ## Architecture
 
-```text
-core host: 10.10.1.1                 cell1 host: 10.10.1.11
-  MySQL + UDR/UDM/AUSF                 OAI gNB + embedded E2 agent
-  AMF/SMF/UPF                            | RFsim on this same host
-  external data network                  +-- OAI UE1 + oaitun_ue1
-  FlexRIC near-RT RIC                     +-- OAI UE2 + oaitun_ue1
-  monitoring xApps
-        | N2 / N3 / E2 over experimental LAN |
+```
+core (10.10.1.1)                     cell1 (10.10.1.11)
+  mysql udr udm ausf                   gNB (controllable scheduler, E2 agent)
+  amf smf upf ext-dn                     | RFsim on this host
+  near-RT RIC (host process)             +-- UE 1 ... UE n
+  xapp_sched_ctrl
+        |  N2 / N3 / E2 over the experimental LAN  |
 ```
 
-The complete inherited core includes subscriber authentication, registration,
-PDU-session establishment and a real user plane through UPF to the data network.
-The RIC is built natively on core from the pinned OAI FlexRIC submodule.
-UEs remain colocated with their gNB, retaining the baseline local IQ transport.
-There is no handover prototype or extra cell in this repository's active profile.
+The gNB and its UEs stay on the same node, so the RFsim IQ path is local. Only control and user
+plane cross the LAN.
 
-## What is implemented
+## Components
 
-| Capability | Status |
-| --- | --- |
-| One-cell POWDER allocation, two UEs by default | Implemented; new repository deployment pending |
-| Full OAI 5G SA core and RFsim RAN setup | Inherited setup retained; fresh reservation validation required |
-| Embedded E2 agent and matched FlexRIC build | Included, with pinned radio artifact references |
-| Monitoring xApps and SQLite telemetry | Included through the FlexRIC build; start after E2 setup |
-| Bounded MGEN traffic and receiver observation safeguards | Included with local regression and loopback evidence |
-| Controllable downlink scheduler on the gNB (policy, per-UE weights and caps, set on the cell node) | Built on the cell node at boot (profile parameter `controllable_scheduler`); measured on a live gNB in three reservations (two and four UEs, AWGN), see `docs/SCHEDULER_CONTROL.md` |
-| Scheduler policy, weights and caps set from an xApp over E2 (`xapp_sched_ctrl`, MAC service model control message) | Implemented, tested on the host and confirmed on one live reservation (policy, weights, caps, reset). The E2 acknowledgement only says that the gNB received the message: check the result with `bin/sched-ctl.py status` |
+| component | contents |
+|-----------|----------|
+| `ghinwa555/oai-gnb-ctrl:<tag>` | OAI gNB with the controllable downlink scheduler (`gnb/src`, `gnb/patches`) and the E2 agent |
+| `ghinwa555/oai-nr-ue-chan` | OAI UE with RFsim and channel model |
+| near-RT RIC | FlexRIC, built from OAI's submodule on the core node at boot, run as a host process |
+| `xapp_sched_ctrl` | xApp that sends scheduler commands to the gNB over E2 (MAC service model) |
 
-The first scheduler target is configurable **downlink allocation between two
-competing UEs**, with the unmodified scheduler as the baseline. Inspecting the
-exact pinned source exposed unsupported or placeholder control callbacks, so the
-MAC control path is implemented here on both ends; sending an E2 control message is
-still not evidence that allocation changed, and every command has to be checked on
-the cell. See [docs/SCHEDULER_CONTROL.md](docs/SCHEDULER_CONTROL.md). No scheduler
-xApp is auto-started, and no fixed-share enforcement is claimed.
+The setup pins OAI `70508ebaf52f2aae420566d380c6537f2efb9f0c` and FlexRIC
+`ef6d722f22191eea74089966983da1f5ec1fedd4`. The gNB image tag ends with a hash of `gnb/src` and
+`gnb/patches`; if the image cannot be pulled, the cell node builds it (about 25 minutes).
+`BUILD.md` describes the images and what is not recorded about them.
 
-## Deploy later on a separate reservation
+## Instantiating
 
-Create a new POWDER profile from this private repository, using `profile.py`.
-Authorize POWDER to read the private repository, as required by your project.
-The entrypoint fixes the number of cells to one; `ues_per_cell` defaults to two.
-It reserves core (default d430) and cell1 (default d740). Availability is not checked
-here. The profile automatically executes setup on the newly reserved hosts.
+Create a POWDER profile from this repository (`profile.py`) with these parameters:
 
-The profile, setup and subscriber generator default to one cell and two UEs.
-Cell/core setup reject extra cells before installing or changing services.
-The core release family remains v2.0.0; the radio artifacts are pinned by digest.
-See [BUILD.md](BUILD.md) for provenance limitations. Do not deploy this on the
-hosts serving an existing measurement campaign.
+| parameter | default | meaning |
+|-----------|---------|---------|
+| `ues_per_cell` | 2 | UEs on the cell |
+| `core_type`, `cell_type` | d430, d740 | hardware of the core and the cell node |
+| `channel_type`, `channel_initial_mode` | AWGN, uniform | RFsim channel model |
+| `controllable_scheduler` | true | use the controllable gNB image |
+| `gnb_ctrl_image` | pinned tag | image to pull; empty builds it on the cell node |
 
-Boot order: **core network and RIC → gNB → UEs → traffic → xApp**.
-Setup logs are `/local/logs/setup.log` on each host; RIC output is
-`/local/logs/nearRT-RIC.log` on core. Inspect setup errors rather than treating
-container existence as registration or PDU-session success. Bring-up requires
-package downloads and source compilation; it has not been timed on a fresh
-reservation for this repository.
+Progress is in `/local/logs/setup.log` on every node, the RIC output in
+`/local/logs/nearRT-RIC.log` on the core. The cell node writes `/local/logs/CELL_READY` when the
+gNB and the UEs are up. Bring-up order: **core, RIC, gNB, UEs, traffic, xApp**. Details and
+re-running setup on a live reservation: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-Check the core containers, gNB E2 registration, and both UEs' tunnels before
-sending traffic. MGEN helpers discover assigned UE IPs rather than assuming them.
-The readiness commands in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) are for the
-later reservation; creating this repository does not execute them.
+## Verifying the deployment
 
-## Monitoring xApps
-
-After the gNB is registered with the RIC and UE traffic has been verified, run on
-core, choosing **one** monitor for the first experiment:
+On the core:
 
 ```bash
-cd /opt/oai-src/openair2/E2AP/flexric
-./build/examples/xApp/c/monitor/xapp_kpm_moni
-# Or, for MAC/RLC/PDCP/GTP telemetry:
-./build/examples/xApp/c/monitor/xapp_gtp_mac_rlc_pdcp_moni
+grep "E2 SETUP-REQUEST rx" /local/logs/nearRT-RIC.log        # the gNB registered over E2
 ```
 
-These executables are built by `bin/core-setup.sh`; they do not require a separate
-standalone FlexRIC installation. The source pins OAI
-`70508ebaf52f2aae420566d380c6537f2efb9f0c` and FlexRIC
-`ef6d722f22191eea74089966983da1f5ec1fedd4`.
+On the cell node:
 
-Start with the smallest reporting scope/rate needed. Do not start a monitor before
-E2 registration or treat placeholder slice values as scheduler state. In the
-pinned source, the customized slice reader uses synthetic fill data; it is not
-proof of enforced slice allocation. MAC cumulative counters can support allocation
-measurement, but the exported slot field is not a reliable per-slot index.
+```bash
+cat /local/logs/GNB_IMAGE /local/logs/CELL_READY               # image in use, cell ready
+sudo docker exec ric5g-ue-cell1-1 ip -4 addr show oaitun_ue1  # a UE has its tunnel address
+cd /local/repository && python3 bin/sched-ctl.py status        # the scheduler answers: policy, one row per UE
+```
 
-Stop xApps with SIGINT/Ctrl-C and verify their clean shutdown; do not force-kill
-them. Restarting RIC requires restarting/re-registering the gNB, which drops UE
-sessions. Keep this separate from scheduler-policy comparisons.
+## Controlling the scheduler
 
-## Local verification
+Policies:
+
+| policy | behaviour |
+|--------|-----------|
+| `pf` | stock proportional fair (default after start and after `reset`) |
+| `rr` | round robin in the time domain |
+| `wrr` | weighted round robin: resource-block shares follow the UE weights |
+| `wshare` | weighted share of the free block among the UEs with data |
+
+On the cell node:
+
+```bash
+cd /local/repository
+python3 bin/sched-ctl.py policy wrr                 # pf | rr | wrr | wshare
+python3 bin/sched-ctl.py weight <rnti> 3000         # RNTI in hex, as printed by status
+python3 bin/sched-ctl.py cap <rnti> 30              # most resource blocks per slot, 0 = none
+python3 bin/sched-ctl.py map --containers ric5g-ue-cell1-1,ric5g-ue-cell1-2   # RNTI of each UE container
+python3 bin/sched-ctl.py reset                      # back to the stock policy
+```
+
+The same commands go over E2 from the core node:
+
+```bash
+/opt/oai-src/openair2/E2AP/flexric/build/examples/xApp/c/ctrl/xapp_sched_ctrl policy wrr
+```
+
+Every command is read back from the gNB and fails if the value differs. An E2 acknowledgement only
+says that the gNB received the message; check the result with `sched-ctl.py status`. Full
+description: [docs/SCHEDULER_CONTROL.md](docs/SCHEDULER_CONTROL.md).
+
+## Measuring
+
+```bash
+python3 bin/sched-ctl.py measure --seconds 20
+```
+
+reports the resource blocks the MAC scheduled per UE in the window, with the share in
+percent and the throughput. This is the evidence for any allocation claim; judge by the resource-block
+shares, because the throughput of RFsim varies by about 10 %. Monitoring xApps (KPM, MAC, RLC, PDCP,
+GTP telemetry) are described in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+## Operational constraints
+
+- **Restarting the RIC orphans every gNB.** Restart the gNB after the RIC.
+- **Restarting a gNB drops all of its UEs** and resets the scheduler to `pf`. RNTIs belong to one
+  attachment: read them again with `map` and set weights again.
+- **Stop an xApp with `Ctrl-C`, never `SIGKILL`.** Do not start an xApp before the gNB has completed E2 setup.
+- **Run nothing else on the cell node while the gNB image builds.** `cell-setup.sh` restarts Docker,
+  which cancels the build.
+
+## Limits
+
+One cell, up to the UEs a single `nr-softmodem` serves. A weight is a share of the resource blocks
+among the UEs that have data in the same slot, not a guaranteed throughput. Uplink scheduling is not
+controlled. RFsim does not provide physical RF coverage.
+
+## Layout
+
+```
+profile.py                 POWDER profile: 1 core node + 1 cell node
+bin/node-setup.sh          setup dispatcher (core | cell); core-setup.sh and cell-setup.sh do the work
+bin/sched-ctl.py           scheduler control and measurement on the cell node
+gnb/src, gnb/patches       controllable scheduler and OAI patches; build-gnb-image.sh builds the image
+gnb/test                   native tests of the scheduler
+xapp/xapp_sched_ctrl.c     xApp that sends the scheduler commands over E2
+etc/                       gNB and UE templates, core configuration, pinned versions
+BUILD.md                   image provenance
+VALIDATION.md              traffic (MGEN) helpers and receiver validation
+docs/                      DEPLOYMENT, SCHEDULER_CONTROL
+tests/                     host tests
+```
+
+## Tests
 
 ```bash
 python3 -m pip install -r tests/requirements.txt
-python3 -m pytest -q
+python3 -m pytest -q tests
+make -C gnb/test check          # native tests of the scheduler
 ```
-
-Inherited tests cover channel mapping, FlexRIC patches, QoS generation, receiver
-lifecycle and packet reconciliation. The Linux-only isolated MGEN compatibility
-test and raw evidence are retained under `tests/integration/` and `validation/`.
-Local tests do not certify this new deployment or future scheduler actuation.
-
-See [VALIDATION.md](VALIDATION.md) for explicit drain policies and censored packets,
-and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the initial two-UE acceptance run.
