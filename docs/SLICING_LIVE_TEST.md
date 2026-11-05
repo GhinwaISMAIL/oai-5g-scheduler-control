@@ -384,7 +384,7 @@ With `U1` to `U4` from section 2 and `X` as in run 13:
 ~/x.sh policy slice
 $X sm-add nvs 1:0.75 2:0.25
 $X sm-assoc $U1:1 $U2:1 $U3:2 $U4:2
-~/dl.sh q14
+DUR=240 ~/dl.sh q14
 ~/chk.sh q14
 ```
 On cell1, after 10 s, `measure --seconds 15` must still give 75 : 25 (regression of run 13). Then empty slice 1:
@@ -397,7 +397,8 @@ its earlier grants), and `measure --seconds 15` gives the four UEs 25 % each (al
 ~/x.sh assoc $U1 1
 ```
 After 5 s `measure --seconds 15` must give slice 1 (`U1`) 75 % and slice 2 25 % (8.3 % for each of its three UEs), with `U1` served
-from the first window and no wait. At the end: `~/x.sh reset`. Not run yet.
+from the first window and no wait. At the end: `~/x.sh reset`. The share outcome of the last step would be the
+same without the update, because the credit bound lifts a slice that is behind; the change shows in the `granted_rbs` of the emptied slice.
 
 ## 4. Results
 
@@ -407,7 +408,7 @@ refers to the furthest-ahead other slice or UE instead of the furthest-behind); 
 used `...:70508eba-dc6cb0734c96`, which has the new bound. The repeats of runs 9 and 11 and run 12 (below the
 first four-UE rows) were made on a second reservation with the image pulled from the registry,
 `ghinwa555/oai-gnb-ctrl:70508eba-3cc4a7aa00f0` (digest `sha256:7acce171...801b12`), which differs from
-`dc6cb0734c96` only in the flushed log lines of the slice handler. Runs 0 to 9 with two UEs were not repeated with it. In every window the version was the same at both ends and every UE
+`dc6cb0734c96` only in the flushed log lines of the slice handler. Runs 0 to 9 with two UEs were not repeated with it. Run 14 was made on `ghinwa555/oai-gnb-ctrl:70508eba-30dbb89f384a` (digest `sha256:8f0358fe...129e`), which also clears the entries of reused RNTIs, restarts a slice that has lost its UEs and returns the status of 32 UEs; run 13 used the image above. In every window the version was the same at both ends and every UE
 received traffic.
 
 | Run | Setup | Expected | Measured |
@@ -431,6 +432,9 @@ received traffic.
 | 13 | four refused messages (NVS above 1, static width 4, slice id 9, unknown RNTI) under traffic | reason in the gNB log, nothing changed | all four reasons in `docker logs`; version and shares (75.0 : 25.0) unchanged |
 | 13 | static slice `3:0-4` with `U3` associated to it | slice 3 weight 1000, cap 5; `U3` limited to 5 RBs per call | slice 3 weight 1000, cap 5, one UE; **`U3` 3.6 % of the RBs** (about 3.8 per call) instead of 12.5 %; the other two slices share the rest 75 : 25 |
 | 13 | `sm-add static 3:0-9`, `sm-del 3`, `sm-add none` | applied; slices cleared | applied; `status` shows neither the slice table nor the slice columns |
+| 14 | updated gNB image; NVS 0.75 / 0.25 with two UEs per slice (as in run 13) | 75 : 25 | **75.0 : 25.0**; UEs 37.5 / 37.5 / 12.5 / 12.5 % |
+| 14 | both UEs of slice 1 moved to slice 2 | slice 1 restarts at zero; 25 % each | slice 1 row: `granted_rbs` 0, `ues` 0, weight 750 kept; slice 2 holds all four UEs; **25.0** % each |
+| 14 | `U1` moved back to slice 1 | `U1` 75 %, the others 8.3 % | **74.7** / 8.4 / 8.4 / 8.4 %; slices 74.7 : 25.3 |
 | 12 | three slices: weights 3000 / 1000 / 2000; `U4` associated to slice 3 | 50.0 : 16.7 : 33.3; UEs 25.0 / 25.0 / 16.7 / 33.3 | **50.0 : 16.7 : 33.3** (182,701 / 60,872 / 121,813 RBs); UEs **25.0 / 25.0 / 16.7 / 33.3** %; `U4` slice 3 `via rnti`, the others `via nssai`; slice counters equal the sums of their UEs (106,742; 35,560; 71,101); version 19 at both ends; 13.31 Mbit/s in total |
 
 Runs 0 to 8 are within 0.4 point of the target (run 0 is the stock policy). In runs 7, 4, 5, 1 and 6
@@ -456,4 +460,4 @@ were in `docker logs` after the repeat of run 11; whether each line appears at t
 timed, because the log watch may have been started after the xApp ran.
 
 Not tested on the cell: a UE that attaches or reconnects with a new RNTI during a run (run 8 and
-run 10 cover UEs that start sending late; the host tests cover the new RNTI). The static cap of run 13 was measured at one width (5 resource blocks); other widths are covered by the host tests.
+run 10 cover UEs that start sending late; the host tests cover the new RNTI, an RNTI that is reused before it is cleaned up, and a full table of 32 UEs). The static cap of run 13 was measured at one width (5 resource blocks); other widths are covered by the host tests. In the last window of run 14 the counter of refused grants was 674 (12 to 18 in the other windows) at a normal total; the static-slice window of run 13 had 677 as well; not investigated.

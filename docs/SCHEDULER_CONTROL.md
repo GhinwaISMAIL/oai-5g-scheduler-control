@@ -69,8 +69,8 @@ starts again from zero grants and credit; its weight and cap stay. A UE that mov
 its grants on the old slice as long as that slice has other UEs. Weights and caps can be changed at any
 time: the credit bound (2000 resource blocks) limits how long a UE or slice waits after a change; on the host
 a weight raised from 1000 to 3000 after a long run gave the other UE a wait of about 200 slots, and a cut
-to 1 took effect at once. These cases are covered by the host tests; they have not been run on a
-reservation yet (`SLICING_LIVE_TEST.md`, run 14).
+to 1 took effect at once. These cases are covered by the host tests, and the restart of an emptied slice was also run
+on a reservation (`SLICING_LIVE_TEST.md`, run 14).
 
 Status of this feature: tested on the host (`gnb/test`, `tests/`), including the property that
 a slice share does not change with the number of UEs in the slice or with how many of them have
@@ -317,7 +317,7 @@ Not done yet, and required before relying on it:
 - Longer and repeated runs, other channel conditions and more than four UEs: the live results above come from three reservations, with two and four UEs, AWGN. Single runs of 20 s were used for most four-UE rows.
 - The E2 path is confirmed on one reservation: policy, weight, cap and reset sent by `xapp_sched_ctrl` through the RIC were applied by the gNB (read back with `sched-ctl.py status`), a command for an unknown RNTI was refused by the gNB while the xApp still reported it as delivered, and an invalid word was rejected by the xApp. It has not been tried with several gNBs or with the E42 subscription load of the monitoring xApps running at the same time.
 - Slice scheduling (policy `slice`, associations, S-NSSAI rules): measured on a live gNB with four UEs (`SLICING_LIVE_TEST.md`, section 4), including the bounded credit of slices and UEs, the slice-level cap and three slices with traffic at once. A UE that attaches with a new RNTI during a run was not tested on the cell. The standard FlexRIC slice message is mapped (section below): the stock slice xApp was run against a gNB (its ADD refused, DEL and association applied, indication received); `xapp_sched_ctrl` then sent valid ADD messages (NVS and static), the association, DEL and the indication read-back, and refused messages changed nothing (`SLICING_LIVE_TEST.md`, run 13). The static cap was measured at one width only.
-- UE churn, reused RNTIs, slices that empty, and a full table of 32 UEs (the profile refuses more than 32; an extra UE would be served after the tracked ones) are covered by the host tests only; the reply to `status` holds all 32 UEs. Not run on a reservation yet (`SLICING_LIVE_TEST.md`, run 14).
+- Reused RNTIs and a full table of 32 UEs (the profile refuses more than 32; an extra UE would be served after the tracked ones) are covered by the host tests only, as is the `status` reply with 32 UEs.
 - Uplink scheduling is not controlled. Handovers and multi-cell coordination are outside scope.
 
 The sources are compiled into the OAI gNB and keep the gNB's licensing in mind

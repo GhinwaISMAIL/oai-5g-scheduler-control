@@ -149,7 +149,7 @@ controlled. RFsim does not provide physical RF coverage.
 Slices: 8 slices, one UE per slot, membership by RNTI association, then by the S-NSSAI the MAC
 reports (SST 1 without SD for all UEs by default). Two different S-NSSAIs are available with `second_slice` (run on a reservation with two and with four UEs, see `docs/SLICING_LIVE_TEST.md`).
 The standard FlexRIC slice message (ADD, DEL, UE association, indication) is translated to the same commands (`docs/SCHEDULER_CONTROL.md`); run on a reservation with the stock slice xApp and with `xapp_sched_ctrl` (ADD with NVS and static slices, DEL, association, indication, refused messages).
-Not tested on the cell: a UE that attaches with a new RNTI during a run. UE churn and slices that empty are covered by the host tests (`docs/SCHEDULER_CONTROL.md`).
+Not tested on the cell: a UE that attaches with a new RNTI during a run. Reused RNTIs and a full UE table are covered by the host tests only (`docs/SCHEDULER_CONTROL.md`).
 
 ## Layout
 
