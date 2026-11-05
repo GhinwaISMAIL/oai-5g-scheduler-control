@@ -64,6 +64,16 @@ Retransmissions are served before the new data and do not count against the cap.
 clears the slices, the associations and the rules. Associations belong to an RNTI and are
 dropped when the UE disconnects; rules stay until `reset`.
 
+Counters follow the slice id and the RNTI, not the membership. A UE that moves to another slice
+(association, rule change) leaves its grants on the old slice, and a slice that has lost all
+its UEs keeps its counter, so UEs placed in it later start behind the other slices by that
+history and wait until they have caught up. Only `SLICEDEL` and `reset` zero a slice. Weights
+and caps can be changed at any time: the credit bound (2000 resource blocks) limits how long
+a UE or slice waits after a change, on the host a weight raised from 1000 to 3000 after a long
+run gave the other UE a wait of about 200 slots, and a cut to 1 took effect at once. For
+measurements, set slices, rules and associations before the traffic starts, or `reset` first,
+as the runs in `SLICING_LIVE_TEST.md` do.
+
 Status of this feature: tested on the host (`gnb/test`, `tests/`), including the property that
 a slice share does not change with the number of UEs in the slice or with how many of them have
 data. It was also run on a live single-cell gNB with four UEs and gave the expected shares for
@@ -95,7 +105,10 @@ Every changing command is acknowledged by the gNB and then read back with a seco
 request; the command fails unless the read-back shows the requested value. The
 version number in `status` increases with every accepted change. RNTIs belong to
 one attachment: when a UE disconnects its settings are dropped, so apply weights
-again after UEs re-register.
+again after UEs re-register. The entries are removed by a check that runs every 256
+scheduler calls, which is about a second and a half at the traffic of the live runs and
+longer when the cell is idle; a UE that comes back with the same RNTI inside that
+interval (RNTIs are random 16-bit values, so this is rare) keeps its previous entry.
 
 ## Standard slice service model
 
@@ -111,6 +124,10 @@ replaces the handler that only printed the message; the translation is in
 | ADD with no slice | `SLICEDEL 0` to `7` |
 | DEL, DL ids | `SLICEDEL id` (weight, cap and counters back to the defaults; associations and S-NSSAI rules of that slice removed) |
 | UE association, `rnti` and `dl_id` | `ASSOC rnti dl_id` |
+
+An NVS capacity is used as a relative weight, not as a reservation: each value is checked on its own
+(0 < p <= 1) and the sum is not, so 0.3 and 0.3 on a fully loaded cell give an equal split of the whole cell,
+not 30 % each. Capacities that add up to 1 give the expected shares.
 
 A message is checked completely before its first command is sent, so one invalid slice
 changes nothing. Refused: other algorithms (NVS rate, SCN19, EDF), uplink slices, ids above 7,
@@ -138,6 +155,9 @@ The xApp checks only the syntax (at most 32 items per message); the gNB checks t
 writes the reason of a refusal to its log. The standard message does not select the policy:
 `policy slice` is still needed. `sm-get` prints the scheduler name, the slices with their
 `pct_reserved` and the slice of every UE, so the state can be read back over E2 as well.
+
+The reply to `status` (and so the indication) is limited to 4096 bytes, which holds about 15 UEs; with more,
+the last UEs are missing from `status` and from the indication, while scheduling is not affected.
 
 The indication reports the real table: the policy name as the scheduler name, each configured
 slice as an NVS capacity slice with `pct_reserved = weight / 1000` (its cap has no field in
@@ -300,6 +320,7 @@ Not done yet, and required before relying on it:
 - Longer and repeated runs, other channel conditions and more than four UEs: the live results above come from three reservations, with two and four UEs, AWGN. Single runs of 20 s were used for most four-UE rows.
 - The E2 path is confirmed on one reservation: policy, weight, cap and reset sent by `xapp_sched_ctrl` through the RIC were applied by the gNB (read back with `sched-ctl.py status`), a command for an unknown RNTI was refused by the gNB while the xApp still reported it as delivered, and an invalid word was rejected by the xApp. It has not been tried with several gNBs or with the E42 subscription load of the monitoring xApps running at the same time.
 - Slice scheduling (policy `slice`, associations, S-NSSAI rules): measured on a live gNB with four UEs (`SLICING_LIVE_TEST.md`, section 4), including the bounded credit of slices and UEs, the slice-level cap and three slices with traffic at once. A UE that attaches with a new RNTI during a run was not tested on the cell. The standard FlexRIC slice message is mapped (section below): the stock slice xApp was run against a gNB (its ADD refused, DEL and association applied, indication received); `xapp_sched_ctrl` then sent valid ADD messages (NVS and static), the association, DEL and the indication read-back, and refused messages changed nothing (`SLICING_LIVE_TEST.md`, run 13). The static cap was measured at one width only.
+- Moving UEs between slices or changing rules under traffic starts from the counters of the previous membership (see the slice section); a UE that returns with the same RNTI before the periodic clean-up keeps its previous entry; with more than 32 distinct RNTIs the extra UEs are not accounted (the profile refuses more than 32 UEs).
 - Uplink scheduling is not controlled. Handovers and multi-cell coordination are outside scope.
 
 The sources are compiled into the OAI gNB and keep the gNB's licensing in mind

@@ -43,7 +43,7 @@ Create a POWDER profile from this repository (`profile.py`) with these parameter
 
 | parameter | default | meaning |
 |-----------|---------|---------|
-| `ues_per_cell` | 2 | UEs on the cell |
+| `ues_per_cell` | 2 | UEs on the cell (at most 32 with the controllable scheduler) |
 | `core_type`, `cell_type` | d430, d740 | hardware of the core and the cell node |
 | `channel_type`, `channel_initial_mode` | AWGN, uniform | RFsim channel model |
 | `controllable_scheduler` | true | use the controllable gNB image |
@@ -149,7 +149,7 @@ controlled. RFsim does not provide physical RF coverage.
 Slices: 8 slices, one UE per slot, membership by RNTI association, then by the S-NSSAI the MAC
 reports (SST 1 without SD for all UEs by default). Two different S-NSSAIs are available with `second_slice` (run on a reservation with two and with four UEs, see `docs/SLICING_LIVE_TEST.md`).
 The standard FlexRIC slice message (ADD, DEL, UE association, indication) is translated to the same commands (`docs/SCHEDULER_CONTROL.md`); run on a reservation with the stock slice xApp and with `xapp_sched_ctrl` (ADD with NVS and static slices, DEL, association, indication, refused messages).
-Not tested on the cell: a UE that attaches with a new RNTI during a run.
+Not tested on the cell: a UE that attaches with a new RNTI during a run. Configuration changes under traffic (moving UEs between slices, deleting rules) start from the counters of the previous membership; set the slices before the traffic or `reset` first (`docs/SCHEDULER_CONTROL.md`).
 
 ## Layout
 

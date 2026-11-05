@@ -54,6 +54,10 @@ params = pc.bindParameters()
 
 if params.ues_per_cell < 1:
     pc.reportError(portal.ParameterError("ues_per_cell must be >= 1", ["ues_per_cell"]))
+if params.controllable_scheduler and params.ues_per_cell > 32:
+    pc.reportError(portal.ParameterError(
+        "ues_per_cell must be <= 32 with the controllable scheduler (it keeps 32 UE entries)",
+        ["ues_per_cell"]))
 if params.second_slice and params.ues_per_cell < 2:
     pc.reportError(portal.ParameterError("second_slice needs ues_per_cell >= 2", ["second_slice", "ues_per_cell"]))
 if params.channel_type not in ("AWGN", "TDL_A", "TDL_B", "TDL_C", "EPA", "EVA", "ETU"):

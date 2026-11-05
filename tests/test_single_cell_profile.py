@@ -112,6 +112,14 @@ def test_profile_rejects_zero_ues_before_allocation(monkeypatch):
         render_profile(monkeypatch,ues=0)
 
 
+def test_profile_limits_ues_with_the_controllable_scheduler(monkeypatch):
+    render_profile(monkeypatch, ues=32)
+    with pytest.raises(ValueError):
+        render_profile(monkeypatch, ues=33)
+    # the limit comes from the scheduler's table; the stock scheduler is not affected
+    render_profile(monkeypatch, ues=33, overrides={'controllable_scheduler': False})
+
+
 @pytest.mark.parametrize('script,args',[
     ('node-setup.sh',['cell','2','1','2']),
     ('node-setup.sh',['core','0','2','2']),
