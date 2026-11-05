@@ -209,6 +209,24 @@ cd /opt/oai-src/openair2/E2AP/flexric
 ./build/examples/xApp/c/ctrl/xapp_sched_ctrl reset
 ```
 
+The same xApp sends the standard slice message (ran function 145), see `SCHEDULER_CONTROL.md`:
+
+```bash
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl sm-add nvs 1:0.75 2:0.25   # slices with weights 750 and 250
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl sm-assoc <rnti>:1 <rnti>:2
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl sm-del 2
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl sm-get                    # print the slice indication
+```
+
+After a change of `xapp/xapp_sched_ctrl.c` on a running reservation, only the xApp has to be
+rebuilt on the core node; the gNB image does not contain it:
+
+```bash
+cd /local/repository && sudo git pull --ff-only
+sudo python3 bin/patch-flexric-sched-ctrl.py /opt/oai-src/openair2/E2AP/flexric
+cd /opt/oai-src/openair2/E2AP/flexric/build && sudo make xapp_sched_ctrl
+```
+
 `<rnti>` is the hexadecimal RNTI printed by `bin/sched-ctl.py map` on the cell node;
 `weight "*" <w>` sets the default weight. The xApp prints the node it used and
 "Scheduler command delivered" when the RIC reported success. That is an

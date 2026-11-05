@@ -318,6 +318,47 @@ On cell1, after 10 s: `python3 bin/sched-ctl.py status` and `measure --seconds 2
 and UEs 25.0 / 25.0 / 16.7 / 33.3 %; `U4` in slice 3 `via rnti` with its `nssai 2:ffffff`, the others `via nssai`.
 The version counts every command: 8 more than before the `reset` plus the `reset` itself.
 
+**Run 13, standard slice message from `xapp_sched_ctrl`.** Needs the xApp with the `sm-` verbs on the core node:
+```bash
+cd /local/repository && sudo git pull --ff-only
+sudo python3 bin/patch-flexric-sched-ctrl.py /opt/oai-src/openair2/E2AP/flexric
+cd /opt/oai-src/openair2/E2AP/flexric/build && sudo make xapp_sched_ctrl 2>&1 | tail -n 3
+./examples/xApp/c/ctrl/xapp_sched_ctrl bogus 2>&1 | grep -c "sm-"
+```
+Expect the build to end with `Built target xapp_sched_ctrl` and the last command to print `6` (the usage lists the
+`sm-` verbs). Only the xApp changed; the gNB image stays.
+
+On cell1, in a second terminal, before the first command: `sudo docker logs -f ric5g-gnb-cell1 2>&1 | grep --line-buffered "SLICE CONTROL"`.
+On the core node, with `U1` to `U4` as in section 2 (RNTIs without `0x`):
+```bash
+X=/opt/oai-src/openair2/E2AP/flexric/build/examples/xApp/c/ctrl/xapp_sched_ctrl
+~/x.sh reset
+~/x.sh policy slice
+$X sm-get                                       # before: policy slice, no slice, the four UEs in slice 0
+$X sm-add nvs 1:0.75 2:0.25
+$X sm-assoc $U1:1 $U2:1 $U3:2 $U4:2
+$X sm-get                                       # after
+~/dl.sh q13
+~/chk.sh q13
+```
+Expect in the gNB log `SLICE CONTROL ADD applied (4 commands)` and `SLICE CONTROL ASSOC applied (4 commands)`.
+Both `sm-get` outputs end with `Slice indication read`; the second lists slices 1 and 2 with `pct_reserved 0.750` and
+`0.250` and the slice of every UE. On cell1, after 10 s: `python3 bin/sched-ctl.py status` and `measure --seconds 20`.
+Expect slice weights 750 and 250 with cap 0, all four UEs `via rnti`, the version 9 higher than after the `reset`
+(policy 1, ADD 4, ASSOC 4), and shares of 75 : 25 and 37.5 / 37.5 / 12.5 / 12.5 %.
+
+Refused messages, with the traffic still running (each leaves the version and the shares unchanged):
+```bash
+$X sm-add nvs 1:1.5          # SLICE CONTROL ADD refused: NVS pct_reserved must be in (0,1], slice (1)
+$X sm-add static 3:0-3       # SLICE CONTROL ADD refused: static slice width must be 5..275 resource blocks, slice (3)
+$X sm-add nvs 9:0.5          # SLICE CONTROL ADD refused: slice id outside 0..7 (9)
+$X sm-assoc 7777:1           # SLICE CONTROL ASSOC: "ASSOC 7777 1" refused: ERR unknown_rnti (0 of 1 commands applied)
+```
+The xApp still prints "Slice message delivered" for these: the acknowledgement only says that the gNB received
+the message. Last, a static slice: `$X sm-add static 3:0-9` gives `ADD applied (2 commands)` and `status` lists slice 3
+with weight 1000 and cap 10. `$X sm-del 3` and `$X sm-add none` bring the slices back to their defaults and remove the
+associations: `status` then shows neither the slice table nor the slice columns. Not run yet.
+
 At the end of the reservation: `~/x.sh reset`.
 
 ## 4. Results

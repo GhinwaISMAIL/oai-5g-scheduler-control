@@ -120,7 +120,24 @@ the lines in its output buffer, so `status` and the version counter are the reli
 acknowledgement to the xApp only says that the gNB received the message. An association is
 applied UE by UE and stops at the first one the endpoint refuses (an unknown RNTI), which the
 log names. The stock slice example of FlexRIC sends static slices of 4, 4 and 5 resource
-blocks and is therefore refused as a whole.
+blocks and is therefore refused as a whole; `sm-add nvs ...` sends a valid message.
+
+`xapp_sched_ctrl` sends these messages from the core node, so the whole path through the RIC can be
+driven without the stock example (`DEPLOYMENT.md`, section on the E2 control path):
+
+```bash
+xapp_sched_ctrl sm-add nvs 1:0.75 2:0.25            # slices 1 and 2, weights 750 and 250
+xapp_sched_ctrl sm-add static 3:0-9                 # slice 3, a limit of 10 resource blocks
+xapp_sched_ctrl sm-assoc 9e82:1 53e4:2              # RNTI (hex) : slice
+xapp_sched_ctrl sm-del 3                            # slice 3 back to its defaults
+xapp_sched_ctrl sm-add none                         # all slices back to their defaults
+xapp_sched_ctrl sm-get                              # print the first indication of the gNB
+```
+
+The xApp checks only the syntax (at most 32 items per message); the gNB checks the values and
+writes the reason of a refusal to its log. The standard message does not select the policy:
+`policy slice` is still needed. `sm-get` prints the scheduler name, the slices with their
+`pct_reserved` and the slice of every UE, so the state can be read back over E2 as well.
 
 The indication reports the real table: the policy name as the scheduler name, each configured
 slice as an NVS capacity slice with `pct_reserved = weight / 1000` (its cap has no field in
@@ -282,7 +299,7 @@ Not done yet, and required before relying on it:
 - Building the gNB image (the stand-in headers in `gnb/test/oai_stub` are transcribed from the pinned source; the real compile happens in the image build).
 - Longer and repeated runs, other channel conditions and more than four UEs: the live results above come from three reservations, with two and four UEs, AWGN. Single runs of 20 s were used for most four-UE rows.
 - The E2 path is confirmed on one reservation: policy, weight, cap and reset sent by `xapp_sched_ctrl` through the RIC were applied by the gNB (read back with `sched-ctl.py status`), a command for an unknown RNTI was refused by the gNB while the xApp still reported it as delivered, and an invalid word was rejected by the xApp. It has not been tried with several gNBs or with the E42 subscription load of the monitoring xApps running at the same time.
-- Slice scheduling (policy `slice`, associations, S-NSSAI rules): measured on a live gNB with four UEs (`SLICING_LIVE_TEST.md`, section 4), including the bounded credit of slices and UEs, the slice-level cap and three slices with traffic at once. A UE that attaches with a new RNTI during a run was not tested on the cell. The standard FlexRIC slice message is mapped (section below): the stock slice xApp was run against a gNB (its ADD refused, DEL and association applied, indication received); a valid ADD was tested on the host only.
+- Slice scheduling (policy `slice`, associations, S-NSSAI rules): measured on a live gNB with four UEs (`SLICING_LIVE_TEST.md`, section 4), including the bounded credit of slices and UEs, the slice-level cap and three slices with traffic at once. A UE that attaches with a new RNTI during a run was not tested on the cell. The standard FlexRIC slice message is mapped (section below): the stock slice xApp was run against a gNB (its ADD refused, DEL and association applied, indication received); a valid ADD (`sm-add`) was tested on the host only, through FlexRIC's own encoder and decoder, and has not been run on a reservation yet.
 - Uplink scheduling is not controlled. Handovers and multi-cell coordination are outside scope.
 
 The sources are compiled into the OAI gNB and keep the gNB's licensing in mind

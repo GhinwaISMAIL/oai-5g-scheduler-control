@@ -105,6 +105,9 @@ The same commands go over E2 from the core node:
 /opt/oai-src/openair2/E2AP/flexric/build/examples/xApp/c/ctrl/xapp_sched_ctrl policy wrr
 ```
 
+The standard FlexRIC slice message goes the same way (`sm-add`, `sm-del`, `sm-assoc`, `sm-get`, see
+`docs/SCHEDULER_CONTROL.md`).
+
 Every command is read back from the gNB and fails if the value differs. An E2 acknowledgement only
 says that the gNB received the message; check the result with `sched-ctl.py status`. Full
 description: [docs/SCHEDULER_CONTROL.md](docs/SCHEDULER_CONTROL.md), design of the slice
@@ -157,7 +160,8 @@ bin/sched-ctl.py           scheduler control and measurement on the cell node
 bin/gen-second-slice.py    core configuration with a second S-NSSAI (profile parameter second_slice)
 gnb/src, gnb/patches       controllable scheduler and OAI patches; build-gnb-image.sh builds the image
 gnb/test                   native tests of the scheduler
-xapp/xapp_sched_ctrl.c     xApp that sends the scheduler commands over E2
+xapp/xapp_sched_ctrl.c     xApp that sends the scheduler commands and the standard slice message over E2
+xapp/test                  stand-ins for the FlexRIC xApp interface, used by the xApp tests
 etc/                       gNB and UE templates, core configuration, pinned versions
 BUILD.md                   image provenance
 VALIDATION.md              traffic (MGEN) helpers and receiver validation
