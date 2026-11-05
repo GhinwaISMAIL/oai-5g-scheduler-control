@@ -7,11 +7,13 @@ scripts, section 3 lists the runs with the expected values, section 4 holds the 
 ## 1. Bring the reservation to the `slicing` branch
 
 The sources of the gNB image changed, so the image has to be built or pulled and the xApp on
-the core node rebuilt.
+the core node rebuilt. The image of the current commit is on the registry
+(`ghinwa555/oai-gnb-ctrl:70508eba-3cc4a7aa00f0`), so a new reservation pulls it in a minute.
 
 **Reservation started from the `slicing` branch** (the profile was instantiated from it): the
-nodes already run this code. The core builds the xApp by itself. The cell node finds that
-`gnb_ctrl_image` does not exist on the registry and builds the image itself, about 25 minutes;
+nodes already run this code. The core builds the xApp by itself. The cell node pulls
+`gnb_ctrl_image`. If the pull fails (a tag that was never pushed, a private repository), it builds the
+image itself, about 25 minutes, and `setup.log` says so;
 **run nothing else on cell1 meanwhile**. `bin/cell-setup.sh` restarts Docker, so a second
 `node-setup.sh cell` while the build runs cancels it ("context canceled" in
 `/local/logs/gnb-build.log`). Watch it with:
@@ -70,7 +72,7 @@ On cell1, read the RNTIs and map them to the containers:
 
 ```bash
 cd /local/repository
-python3 bin/sched-ctl.py status | head -8
+python3 bin/sched-ctl.py status
 sudo python3 bin/sched-ctl.py map --containers ric5g-ue-cell1-1,ric5g-ue-cell1-2,ric5g-ue-cell1-3,ric5g-ue-cell1-4
 ```
 
@@ -143,7 +145,7 @@ Cell block, the same for every run:
 
 ```bash
 cd /local/repository
-sleep 10; python3 bin/sched-ctl.py status | head -24; python3 bin/sched-ctl.py measure --seconds 20
+sleep 10; python3 bin/sched-ctl.py status; python3 bin/sched-ctl.py measure --seconds 20
 ```
 
 Every core block starts with the following (the queues of the previous run take minutes to drain,
@@ -234,7 +236,7 @@ DUR=60 ~/dl.sh q8b $IP4
 On cell1, as soon as the first marker appears:
 ```bash
 cd /local/repository
-sleep 62; python3 bin/sched-ctl.py measure --seconds 20; python3 bin/sched-ctl.py status | head -9
+sleep 62; python3 bin/sched-ctl.py measure --seconds 20; python3 bin/sched-ctl.py status
 ```
 Expect about 25 % for each UE, `U4` included. The counters of `U4` stay far below the others; they
 count real grants.
@@ -277,7 +279,7 @@ DUR=60 ~/dl.sh q10b $IP3 $IP4
 On cell1, as soon as the first marker appears:
 ```bash
 cd /local/repository
-sleep 62; python3 bin/sched-ctl.py measure --seconds 20; python3 bin/sched-ctl.py status | head -9
+sleep 62; python3 bin/sched-ctl.py measure --seconds 20; python3 bin/sched-ctl.py status
 ```
 Expect about 25 % for each UE.
 
@@ -300,6 +302,22 @@ Then `python3 bin/sched-ctl.py status` on cell1 shows that UE in slice 5 `via rn
 gone up by one for the policy, one for the DEL and one for the association (the refused ADD does not change it).
 A valid ADD is covered by the host tests only, because the stock example cannot send one.
 
+**Run 12, three slices with traffic.** Slices 1 and 2 come from the S-NSSAI rules (as in run 9), slice 3 from
+an association that overrides the rule. With the four UEs of run 9, `U4` (SST 2) is moved to slice 3, so the
+three slices hold two, one and one UE.
+```bash
+~/x.sh reset
+~/x.sh policy slice
+~/x.sh nssai-map 1 none 1; ~/x.sh nssai-map 2 none 2
+~/x.sh slice-weight 1 3000; ~/x.sh slice-weight 2 1000; ~/x.sh slice-weight 3 2000
+~/x.sh assoc $U4 3
+~/dl.sh q12
+~/chk.sh q12
+```
+On cell1, after 10 s: `python3 bin/sched-ctl.py status` and `measure --seconds 20`. Expect slices 50.0 : 16.7 : 33.3
+and UEs 25.0 / 25.0 / 16.7 / 33.3 %; `U4` in slice 3 `via rnti` with its `nssai 2:ffffff`, the others `via nssai`.
+The version counts every command: 8 more than before the `reset` plus the `reset` itself.
+
 At the end of the reservation: `~/x.sh reset`.
 
 ## 4. Results
@@ -307,8 +325,10 @@ At the end of the reservation: `~/x.sh reset`.
 Single cell, RFsim, AWGN, 20 s windows. Runs 0 to 8 used the image `...:70508eba-31ef394cea46` with four UEs
 with SST 1 and no SD, and run 9 with two UEs (SST 1 and SST 2). The credit bound was changed afterwards (it now
 refers to the furthest-ahead other slice or UE instead of the furthest-behind); runs 9 (four UEs), 10 and 11
-used `...:70508eba-dc6cb0734c96`, which has the new bound. Runs 0 to 9 with two UEs were not repeated with it,
-apart from the checks in run 9 (four UEs). In every window the version was the same at both ends and every UE
+used `...:70508eba-dc6cb0734c96`, which has the new bound. The repeats of runs 9 and 11 and run 12 (below the
+first four-UE rows) were made on a second reservation with the image pulled from the registry,
+`ghinwa555/oai-gnb-ctrl:70508eba-3cc4a7aa00f0` (digest `sha256:7acce171...801b12`), which differs from
+`dc6cb0734c96` only in the flushed log lines of the slice handler. Runs 0 to 9 with two UEs were not repeated with it. In every window the version was the same at both ends and every UE
 received traffic.
 
 | Run | Setup | Expected | Measured |
@@ -326,6 +346,9 @@ received traffic.
 | 9 | four UEs, UEs 1 and 2 SST 1, UEs 3 and 4 SST 2, rules to slices 1 and 2, weights 3000 : 1000 | 75 : 25; 37.5 / 37.5 / 12.5 / 12.5 | **75.0 : 25.0**; **37.5 / 37.5 / 12.5 / 12.5** %; all `via nssai` with `nssai 1:ffffff` and `2:ffffff`; version 13 at both ends; slice counters equal the sums of their UEs (325,962 = 163,007 + 162,955; 110,273 = 55,114 + 55,159) |
 | 10 | `wrr`, `U3` and `U4` start after 60 s | 25 % each | **25.0 %** each (92,724 / 92,705 / 92,724 / 92,677 RBs in the window); version 2 at both ends; the late UEs ended at about 230,000 granted RBs, the others at about 834,000 |
 | 11 | stock slice xApp, policy `slice` | ADD refused, DEL and ASSOC applied, indication received | version 2 to 6 (reset, policy, DEL, ASSOC; the refused ADD changed nothing); one UE in slice 5 `via rnti`, the others in slice 0 `via default`; about 26 indications received, the xApp stopped cleanly |
+| 9 | repeat on that image: slice weights 3000 : 1000, rules to slices 1 and 2 | 75 : 25; 37.5 / 37.5 / 12.5 / 12.5 | **75.0 : 25.0**; **37.5 / 37.5 / 12.5 / 12.5** %; all `via nssai` with `1:ffffff` and `2:ffffff`; version 11 at both ends; slice counters equal the sums of their UEs once the 5 RBs of slice 0 (a grant before the rules were set) are added; 8.08 Mbit/s in total |
+| 11 | repeat: stock slice xApp | ADD refused, DEL and ASSOC applied | version 4 (reset, policy, DEL, ASSOC); `SLICE CONTROL ADD refused: static slice width must be 5..275 resource blocks, slice (0)`, `DEL applied (1 commands)` and `ASSOC applied (1 commands)` are in `docker logs`; one UE in slice 5 `via rnti`, the others in slice 0 `via default`; clean stop |
+| 12 | three slices: weights 3000 / 1000 / 2000; `U4` associated to slice 3 | 50.0 : 16.7 : 33.3; UEs 25.0 / 25.0 / 16.7 / 33.3 | **50.0 : 16.7 : 33.3** (182,701 / 60,872 / 121,813 RBs); UEs **25.0 / 25.0 / 16.7 / 33.3** %; `U4` slice 3 `via rnti`, the others `via nssai`; slice counters equal the sums of their UEs (106,742; 35,560; 71,101); version 19 at both ends; 13.31 Mbit/s in total |
 
 Runs 0 to 8 are within 0.4 point of the target (run 0 is the stock policy). In runs 7, 4, 5, 1 and 6
 the sum of the grant counters of the UEs equals the sum of the slice counters. The `granted_rbs`
@@ -339,13 +362,15 @@ fell short (66.7, 69.5, 72.2, 74.0) are below the target for the heavier slice; 
 work-conserving scheduler giving the slot to the other UE while the heavier UE has little queued, but
 it was not checked.
 
-Limits: one 20 s window per run; the total throughput of a run varies by about 10 % at the same
-resource-block rate, so judge by the resource-block shares; RFsim with the same channel for all UEs.
+Limits: one 20 s window per run; the total throughput varies at the same resource-block rate (8.08 Mbit/s in
+the repeat of run 9 and 13.31 Mbit/s in run 12, both at about 18,300 RBs/s, on the same reservation; not
+explained), so judge by the resource-block shares; RFsim with the same channel for all UEs.
 Run 10 was measured with the new credit bound only; the old bound was not run on the cell, so its 85 % is a
 host-test figure. In run 11 the log lines of the handler did not appear in `docker logs` because the container
 buffers the output of the gNB (see `DEPLOYMENT.md`); the refusal of the ADD and the effect of the DEL and the
-association are therefore shown by the version counter and by `status` only. The flush added to the handler
-afterwards has not been run on the cell.
+association are therefore shown by the version counter and by `status` only. With the flush the three lines
+were in `docker logs` after the repeat of run 11; whether each line appears at the moment it is printed was not
+timed, because the log watch may have been started after the xApp ran.
 
 Not tested on the cell: a valid standard ADD message (the stock example sends slices that are refused, so ADD is
 covered by the host tests only), and a UE that attaches or reconnects with a new RNTI during a run (run 8 and

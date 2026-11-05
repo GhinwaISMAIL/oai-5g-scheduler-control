@@ -124,9 +124,10 @@ GTP telemetry) are described in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 ## Results
 
 The policies and the slicing were run on a live gNB with four UEs (RFsim, AWGN). The measured shares
-were within 0.4 point of the configured targets for slice weights, UE weights, the slice cap,
-membership by RNTI and by S-NSSAI, and the bounded credit of slices and UEs. The procedure and the
-numbers are in [docs/SLICING_LIVE_TEST.md](docs/SLICING_LIVE_TEST.md).
+matched the configured targets for slice weights, UE weights, the slice cap, membership by RNTI and by
+S-NSSAI, the bounded credit of slices and UEs, and three slices at once. One measurement window after a
+rule deletion deviated from its target and is not explained. The procedure and the numbers are in
+[docs/SLICING_LIVE_TEST.md](docs/SLICING_LIVE_TEST.md).
 
 ## Operational constraints
 
