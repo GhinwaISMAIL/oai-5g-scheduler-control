@@ -300,7 +300,7 @@ Expect in the gNB log:
 
 Then `python3 bin/sched-ctl.py status` on cell1 shows that UE in slice 5 `via rnti`, and the version has
 gone up by one for the policy, one for the DEL and one for the association (the refused ADD does not change it).
-A valid ADD is covered by the host tests only, because the stock example cannot send one.
+The stock example cannot send a valid ADD; run 13 does, with `xapp_sched_ctrl`.
 
 **Run 12, three slices with traffic.** Slices 1 and 2 come from the S-NSSAI rules (as in run 9), slice 3 from
 an association that overrides the rule. With the four UEs of run 9, `U4` (SST 2) is moved to slice 3, so the
@@ -355,9 +355,22 @@ $X sm-add nvs 9:0.5          # SLICE CONTROL ADD refused: slice id outside 0..7 
 $X sm-assoc 7777:1           # SLICE CONTROL ASSOC: "ASSOC 7777 1" refused: ERR unknown_rnti (0 of 1 commands applied)
 ```
 The xApp still prints "Slice message delivered" for these: the acknowledgement only says that the gNB received
-the message. Last, a static slice: `$X sm-add static 3:0-9` gives `ADD applied (2 commands)` and `status` lists slice 3
-with weight 1000 and cap 10. `$X sm-del 3` and `$X sm-add none` bring the slices back to their defaults and remove the
-associations: `status` then shows neither the slice table nor the slice columns. Not run yet.
+the message. On cell1, `measure --seconds 15` must show the same version at both ends and shares of 75 : 25.
+The traffic of `dl.sh` ends after its duration; if `measure` reports 0.00 Mbit/s, start `dl.sh` again, because
+the shares of an idle cell say nothing.
+
+A static slice with a cap, with `U3` moved into it (the width is the minimum, 5 resource blocks, so the cap is easy to see):
+```bash
+$X sm-add static 3:0-4       # SLICE CONTROL ADD applied (2 commands)
+$X sm-assoc $U3:3            # SLICE CONTROL ASSOC applied (1 commands)
+```
+On cell1, after 5 s: `status` lists slice 3 with weight 1000, cap 5 and one UE, and `U3` in slice 3 `via rnti`; the
+version is 3 higher than before. In `measure`, the resource blocks of `U3` stay below 5 times the number of scheduler
+calls of the window (calls per second times 15), against about 12.5 % of the cell without the cap. The capped slice takes
+its few blocks first; the rest of the cell is shared between the other two slices in the ratio of their weights.
+
+Clearing: `$X sm-del 3` removes one slice, `$X sm-add none` brings all slices back to their defaults and removes the
+associations (`ADD applied (8 commands)`): `status` then shows neither the slice table nor the slice columns.
 
 At the end of the reservation: `~/x.sh reset`.
 
@@ -389,6 +402,10 @@ received traffic.
 | 11 | stock slice xApp, policy `slice` | ADD refused, DEL and ASSOC applied, indication received | version 2 to 6 (reset, policy, DEL, ASSOC; the refused ADD changed nothing); one UE in slice 5 `via rnti`, the others in slice 0 `via default`; about 26 indications received, the xApp stopped cleanly |
 | 9 | repeat on that image: slice weights 3000 : 1000, rules to slices 1 and 2 | 75 : 25; 37.5 / 37.5 / 12.5 / 12.5 | **75.0 : 25.0**; **37.5 / 37.5 / 12.5 / 12.5** %; all `via nssai` with `1:ffffff` and `2:ffffff`; version 11 at both ends; slice counters equal the sums of their UEs once the 5 RBs of slice 0 (a grant before the rules were set) are added; 8.08 Mbit/s in total |
 | 11 | repeat: stock slice xApp | ADD refused, DEL and ASSOC applied | version 4 (reset, policy, DEL, ASSOC); `SLICE CONTROL ADD refused: static slice width must be 5..275 resource blocks, slice (0)`, `DEL applied (1 commands)` and `ASSOC applied (1 commands)` are in `docker logs`; one UE in slice 5 `via rnti`, the others in slice 0 `via default`; clean stop |
+| 13 | `xapp_sched_ctrl`: `sm-add nvs 1:0.75 2:0.25`, `sm-assoc` of the four UEs, `sm-get` before and after | `ADD applied (4 commands)`, `ASSOC applied (4 commands)`; 75 : 25 | applied; **75.0 : 25.0**, UEs 37.5 / 37.5 / 12.5 / 12.5 %, all `via rnti`; the indication lists both slices and the slice of every UE; repeated on a clean start with the same result |
+| 13 | four refused messages (NVS above 1, static width 4, slice id 9, unknown RNTI) under traffic | reason in the gNB log, nothing changed | all four reasons in `docker logs`; version and shares (75.0 : 25.0) unchanged |
+| 13 | static slice `3:0-4` with `U3` associated to it | slice 3 weight 1000, cap 5; `U3` limited to 5 RBs per call | slice 3 weight 1000, cap 5, one UE; **`U3` 3.6 % of the RBs** (about 3.8 per call) instead of 12.5 %; the other two slices share the rest 75 : 25 |
+| 13 | `sm-add static 3:0-9`, `sm-del 3`, `sm-add none` | applied; slices cleared | applied; `status` shows neither the slice table nor the slice columns |
 | 12 | three slices: weights 3000 / 1000 / 2000; `U4` associated to slice 3 | 50.0 : 16.7 : 33.3; UEs 25.0 / 25.0 / 16.7 / 33.3 | **50.0 : 16.7 : 33.3** (182,701 / 60,872 / 121,813 RBs); UEs **25.0 / 25.0 / 16.7 / 33.3** %; `U4` slice 3 `via rnti`, the others `via nssai`; slice counters equal the sums of their UEs (106,742; 35,560; 71,101); version 19 at both ends; 13.31 Mbit/s in total |
 
 Runs 0 to 8 are within 0.4 point of the target (run 0 is the stock policy). In runs 7, 4, 5, 1 and 6
@@ -413,6 +430,5 @@ association are therefore shown by the version counter and by `status` only. Wit
 were in `docker logs` after the repeat of run 11; whether each line appears at the moment it is printed was not
 timed, because the log watch may have been started after the xApp ran.
 
-Not tested on the cell: a valid standard ADD message (the stock example sends slices that are refused, so ADD is
-covered by the host tests only), and a UE that attaches or reconnects with a new RNTI during a run (run 8 and
-run 10 cover UEs that start sending late; the host tests cover the new RNTI).
+Not tested on the cell: a UE that attaches or reconnects with a new RNTI during a run (run 8 and
+run 10 cover UEs that start sending late; the host tests cover the new RNTI). The static cap of run 13 was measured at one width (5 resource blocks); other widths are covered by the host tests.

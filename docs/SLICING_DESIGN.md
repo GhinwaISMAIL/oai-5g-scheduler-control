@@ -170,7 +170,7 @@ C. Standard FlexRIC slice message: `gnb/patches/0004-e2-slice-control.patch` rep
    data. Tested on the host with the real command parser and the handler under AddressSanitizer
    (`SCHEDULER_CONTROL.md`, section on the standard slice service model). Run on a reservation with the stock slice
 xApp: the ADD was refused as expected (its static slices are 4 and 5 resource blocks wide), DEL and association
-were applied and the indication was received (`SLICING_LIVE_TEST.md`, run 11). A valid ADD has not been sent to a gNB.
+were applied and the indication was received (`SLICING_LIVE_TEST.md`, run 11). A valid ADD (NVS and static), the association, DEL and the clearing ADD were then sent with `xapp_sched_ctrl`, and the four kinds of refusal were reported in the gNB log (`SLICING_LIVE_TEST.md`, run 13).
 
 ## Decisions to confirm
 
