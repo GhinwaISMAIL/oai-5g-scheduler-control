@@ -126,7 +126,7 @@ GTP telemetry) are described in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Results
 
-The policies and the slicing were run on a live gNB with four UEs (RFsim, AWGN). The measured shares
+The policies and the slicing were run on a live gNB with four UEs (RFsim, AWGN). A fresh deployment of the profile from `main` with 12 UEs gave the expected shares for `pf`, `wrr` and `slice`. The measured shares
 matched the configured targets for slice weights, UE weights, the slice cap, membership by RNTI and by
 S-NSSAI, the bounded credit of slices and UEs, and three slices at once. One measurement window after a
 rule deletion deviated from its target and is not explained. The procedure and the numbers are in
@@ -143,7 +143,7 @@ rule deletion deviated from its target and is not explained. The procedure and t
 
 ## Limits
 
-- One cell with up to 32 UEs (the controllable scheduler keeps 32 UE entries). RFsim does not provide
+- One cell with up to 32 UEs (the controllable scheduler keeps 32 UE entries); the live runs used up to 12. RFsim does not provide
   physical RF coverage. Uplink scheduling is not controlled.
 - A weight is a share of the resource blocks among the UEs that have data in the same slot, not a
   guaranteed throughput.

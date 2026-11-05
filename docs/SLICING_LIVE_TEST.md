@@ -1,6 +1,6 @@
 # Live test of slice-aware scheduling
 
-Procedure and results of the live runs of the `slice` policy on a reservation with four UEs (run 9: two UEs)
+Procedure and results of the live runs of the `slice` policy on a reservation with four UEs (run 9: two UEs; run 15: twelve UEs)
 (branch `slicing`). Section 1 deploys the branch, section 2 prepares the variables and helper
 scripts, section 3 lists the runs with the expected values, section 4 holds the results.
 
@@ -400,6 +400,23 @@ After 5 s `measure --seconds 15` must give slice 1 (`U1`) 75 % and slice 2 25 % 
 from the first window and no wait. At the end: `~/x.sh reset`. The share outcome of the last step would be the
 same without the update, because the credit bound lifts a slice that is behind; the change shows in the `granted_rbs` of the emptied slice.
 
+**Run 15, fresh deployment from `main` with 12 UEs.** A new reservation from the profile with `ues_per_cell` 12 and the
+other parameters at their defaults, without manual steps: the image is pulled from the registry (no login, no build).
+Check the deployment as in the README (E2 setup, one tunnel address per UE, `status` with 12 rows), then prepare
+section 2 for 12 containers (RNTIs from `map`, one iperf3 server per container, 12 addresses). With 12 UEs the
+simulation makes fewer scheduler calls per second, about 7,000 resource blocks per second in total, so 1.5 Mbit/s per UE is
+enough to saturate the cell. Three conditions make a run valid:
+- Wait until the cell is idle between runs (the resource blocks scheduled in 15 s are back at the idle level, about 50).
+  The backlog of the previous run otherwise delays the TCP connection of the next clients, and they time out.
+- Every client log must be non-empty and free of error text; an empty log after the end of the test means the client
+  never connected.
+- Measure only while all clients are active (`DUR=70`, window from 20 s to 50 s). A window that includes the start or the
+  end of the traffic gives less than its share to the UE whose client started, and therefore ended, first.
+
+Runs: `pf`; `wrr` with weights 3000 and 2000 for two UEs and 1000 for the others; `slice` with slice 1 at weight 3000 and
+four UEs associated to it, the other eight in slice 0. Earlier windows of the same session that did not meet these
+conditions are not reported.
+
 ## 4. Results
 
 Single cell, RFsim, AWGN, 20 s windows. Runs 0 to 8 used the image `...:70508eba-31ef394cea46` with four UEs
@@ -435,6 +452,9 @@ received traffic.
 | 14 | updated gNB image; NVS 0.75 / 0.25 with two UEs per slice (as in run 13) | 75 : 25 | **75.0 : 25.0**; UEs 37.5 / 37.5 / 12.5 / 12.5 % |
 | 14 | both UEs of slice 1 moved to slice 2 | slice 1 restarts at zero; 25 % each | slice 1 row: `granted_rbs` 0, `ues` 0, weight 750 kept; slice 2 holds all four UEs; **25.0** % each |
 | 14 | `U1` moved back to slice 1 | `U1` 75 %, the others 8.3 % | **74.7** / 8.4 / 8.4 / 8.4 %; slices 74.7 : 25.3 |
+| 15 | fresh reservation from `main`, 12 UEs, `pf` | about 8.3 % each | 8.1 to 8.6 % each |
+| 15 | `wrr`, weights 3000 and 2000 for two UEs, 1000 for the other ten | 20.0 / 13.3 / 6.7 % | **20.0 / 13.3** %; the other ten 6.6 to 6.7 % |
+| 15 | `slice`, slice 1 at weight 3000 with four UEs, eight UEs in slice 0 | 75 : 25; 18.75 % and 3.1 % each | **75.0 : 25.0**; **18.7 to 18.8** % and **3.1** % each |
 | 12 | three slices: weights 3000 / 1000 / 2000; `U4` associated to slice 3 | 50.0 : 16.7 : 33.3; UEs 25.0 / 25.0 / 16.7 / 33.3 | **50.0 : 16.7 : 33.3** (182,701 / 60,872 / 121,813 RBs); UEs **25.0 / 25.0 / 16.7 / 33.3** %; `U4` slice 3 `via rnti`, the others `via nssai`; slice counters equal the sums of their UEs (106,742; 35,560; 71,101); version 19 at both ends; 13.31 Mbit/s in total |
 
 Runs 0 to 8 are within 0.4 point of the target (run 0 is the stock policy). In runs 7, 4, 5, 1 and 6

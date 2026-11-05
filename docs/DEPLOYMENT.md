@@ -1,14 +1,14 @@
 # First single-cell reservation
 
 Use a fresh two-host POWDER reservation from this repository's `profile.py`.
-The defaults are one gNB and two OAI UE processes. No hardware was reserved or
-software deployed while preparing this repository.
+The defaults are one gNB and two OAI UE processes (`ues_per_cell`); deployments
+with four and with 12 UEs were run, see `SLICING_LIVE_TEST.md`.
 
 ## What setup includes
 
 - Core host: MySQL, UDR, UDM, AUSF, AMF, SMF, UPF and an external data-network
   container, plus a native FlexRIC RIC built from the pinned submodule.
-- Cell host: one E2-enabled gNB and two UEs, with RFsim IQ confined to that host.
+- Cell host: one E2-enabled gNB and `ues_per_cell` UEs (two by default), with RFsim IQ confined to that host.
 - UE authentication and PDU-session subscriber rows generated before core startup.
 - Routing for N2/N3 and real UE application traffic through the UE tunnel and UPF.
 - Native monitoring xApp binaries built on core, started manually after E2 setup.
