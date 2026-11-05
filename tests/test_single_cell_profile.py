@@ -112,6 +112,14 @@ def test_profile_rejects_zero_ues_before_allocation(monkeypatch):
         render_profile(monkeypatch,ues=0)
 
 
+def test_profile_limits_ues_with_the_controllable_scheduler(monkeypatch):
+    render_profile(monkeypatch, ues=32)
+    with pytest.raises(ValueError):
+        render_profile(monkeypatch, ues=33)
+    # the limit comes from the scheduler's table; the stock scheduler is not affected
+    render_profile(monkeypatch, ues=33, overrides={'controllable_scheduler': False})
+
+
 @pytest.mark.parametrize('script,args',[
     ('node-setup.sh',['cell','2','1','2']),
     ('node-setup.sh',['core','0','2','2']),
@@ -162,7 +170,7 @@ def test_flexric_api_export_collects_control_interface_files(tmp_path):
     assert missing.returncode == 0 and not (tmp_path / 'b.tar.gz').exists()
 
 
-DEFAULT_GNB_IMAGE = 'ghinwa555/oai-gnb-ctrl:70508eba-c8747dfc6bc3'
+DEFAULT_GNB_IMAGE = 'ghinwa555/oai-gnb-ctrl:70508eba-30dbb89f384a'
 
 
 def test_default_gnb_image_matches_the_sources_in_this_checkout():

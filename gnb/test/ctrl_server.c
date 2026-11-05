@@ -40,6 +40,8 @@ int main(int argc, char **argv)
     /* grow the counters so `measure` has something to report */
     ues[0].mac_dl_rbs += 300; ues[0].mac_dl_sdu_bytes += 3000;
     ues[1].mac_dl_rbs += 100; ues[1].mac_dl_sdu_bytes += 1000;
+    nr_ctrl_account(&st, 0x1001, 300);
+    nr_ctrl_account(&st, 0x1002, 100);
     int n = nr_ctrl_handle(&st, cmd, ues, 2, reply, sizeof(reply));
     sendto(fd, reply, (size_t)n, 0, (struct sockaddr *)&peer, pl);
   }

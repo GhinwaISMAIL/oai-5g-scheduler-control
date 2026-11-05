@@ -89,7 +89,127 @@ def test_client_policy_weight_cap_and_reset_are_read_back(server):
     assert r.returncode == 0 and "policy=pf" in r.stdout
 
 
-@pytest.mark.parametrize("args", [("weight", "1001", "0"), ("weight", "9999", "10"), ("cap", "1001", "3"), ("weight", "zz", "10")])
+def test_client_slice_commands_are_read_back(server):
+    assert client(server, "policy", "slice").returncode == 0
+    r = client(server, "slice", "1", "weight", "3000")
+    assert r.returncode == 0, r.stderr
+    assert any(line.split()[:3] == ["1", "3000", "0"] for line in r.stdout.splitlines() if (line.split() or [''])[0].isdigit())
+    r = client(server, "slice", "2", "cap", "30")
+    assert r.returncode == 0 and any(line.split()[:3] == ["2", "1000", "30"] for line in r.stdout.splitlines() if (line.split() or [''])[0].isdigit())
+    # the default value set explicitly is still read back
+    r = client(server, "slice", "3", "weight", "1000")
+    assert r.returncode == 0 and any(line.split()[:2] == ["3", "1000"] for line in r.stdout.splitlines() if (line.split() or [''])[0].isdigit())
+    r = client(server, "assoc", "1001", "1")
+    assert r.returncode == 0, r.stderr
+    row = [line for line in r.stdout.splitlines() if line.startswith("0x1001")][0].split()
+    assert row[-3:-1] == ["1", "rnti"]
+    r = client(server, "nssai-map", "2", "none", "3")
+    assert r.returncode == 0 and "rule: S-NSSAI sst=2 sd=none -> slice 3" in r.stdout
+    r = client(server, "nssai-map", "2", "123456", "4")
+    assert r.returncode == 0 and "sst=2 sd=123456 -> slice 4" in r.stdout
+    r = client(server, "nssai-map", "2", "123456", "-")
+    assert r.returncode == 0 and "sd=123456" not in r.stdout
+    r = client(server, "assoc", "1001", "-")
+    assert r.returncode == 0
+    row = [line for line in r.stdout.splitlines() if line.startswith("0x1001")][0].split()
+    assert row[-3:-1] == ["0", "default"]
+    r = client(server, "reset")
+    assert r.returncode == 0 and "policy=pf" in r.stdout and "rule:" not in r.stdout
+    assert not any((line.split() or [''])[0].isdigit() for line in r.stdout.splitlines())
+
+
+def test_client_slice_del_resets_one_slice(server):
+    assert client(server, "policy", "slice").returncode == 0
+    assert client(server, "slice", "3", "weight", "4000").returncode == 0
+    assert client(server, "slice", "3", "cap", "20").returncode == 0
+    assert client(server, "slice", "2", "weight", "2000").returncode == 0
+    assert client(server, "assoc", "1001", "3").returncode == 0
+    assert client(server, "assoc", "1002", "2").returncode == 0
+    r = client(server, "nssai-map", "1", "none", "3")
+    assert r.returncode == 0 and "sst=1 sd=none -> slice 3" in r.stdout
+    r = client(server, "slice-del", "3")
+    assert r.returncode == 0, r.stderr
+    rows = [line.split() for line in r.stdout.splitlines() if (line.split() or [''])[0].isdigit()]
+    assert not any(row[0] == "3" for row in rows) and any(row[0] == "2" and row[1] == "2000" for row in rows)
+    assert "rule:" not in r.stdout
+    row = [line for line in r.stdout.splitlines() if line.startswith("0x1001")][0].split()
+    assert row[-3:-1] == ["0", "default"]
+    row = [line for line in r.stdout.splitlines() if line.startswith("0x1002")][0].split()
+    assert row[-3:-1] == ["2", "rnti"]
+    assert client(server, "slice-del", "3").returncode == 0  # an empty slice can be deleted again
+    assert client(server, "reset").returncode == 0
+
+
+@pytest.mark.parametrize("arg", ["8", "-1", "x"])
+def test_client_slice_del_rejects_a_bad_slice(server, arg):
+    r = client(server, "slice-del", arg)
+    assert r.returncode != 0
+
+
+def slice_handler_source():
+    """The new ran_func_slice.c, rebuilt from the lines of the patch that are kept or added (the patch holds the whole file)."""
+    text = (GNB / "patches" / "0004-e2-slice-control.patch").read_text()
+    hunks = text.split("\n@@", 1)[1].split("\n", 1)[1]
+    return "\n".join(line[1:] for line in hunks.split("\n") if line.startswith(("+", " "))) + "\n"
+
+
+def test_slice_handler_patch_touches_only_the_slice_handler():
+    text = (GNB / "patches" / "0004-e2-slice-control.patch").read_text()
+    assert re.findall(r"^diff --git a/(\S+) b/", text, re.M) == ["openair2/E2AP/RAN_FUNCTION/CUSTOMIZED/ran_func_slice.c"]
+    assert text.count("\n@@") == 1  # one hunk with the whole file, so the test below sees all of it
+    source = slice_handler_source()
+    assert "fill_slice_ind_data" not in source and "fill_rnd_data_slice" not in source  # no random data
+    assert "nr_ctrl_sm_plan_add" in source and "nr_ctrl_sm_plan_del" in source and "nr_ctrl_sm_plan_assoc" in source
+
+
+@needs_gcc
+def test_slice_handler_runs_against_the_control_endpoint(tmp_path):
+    (tmp_path / "ran_func_slice.c").write_text(slice_handler_source())
+    inc = tmp_path / "inc" / "openair2" / "LAYER2"
+    inc.mkdir(parents=True)
+    (inc / "NR_MAC_gNB").symlink_to(GNB / "src")
+    stub = GNB / "test" / "flexric_stub"
+    flags = ["-std=gnu11", "-O1", "-g", "-Wall", "-Wextra", "-Werror", "-Wunused-parameter", "-fsanitize=address,undefined"]
+    handler = tmp_path / "handler"
+    r = subprocess.run(["gcc", *flags, "-I", str(stub), "-I", str(stub / "openair2/E2AP/RAN_FUNCTION/CUSTOMIZED"), "-I", str(tmp_path / "inc"),
+                        str(tmp_path / "ran_func_slice.c"), str(GNB / "test" / "test_slice_handler.c"), "-o", str(handler), "-lm"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    srv = tmp_path / "ctrl_server"
+    r = subprocess.run(["gcc", "-std=gnu11", "-I", str(GNB / "src"), str(GNB / "test" / "ctrl_server.c"), str(GNB / "src" / "nr_dl_ctrl_state.c"), "-o", str(srv), "-lm"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    port = free_port()
+    proc = subprocess.Popen([str(srv), str(port)], stdout=subprocess.PIPE, text=True)
+    try:
+        assert proc.stdout.readline().strip() == "ready"
+        r = subprocess.run([str(handler), str(port)], capture_output=True, text=True, timeout=60)
+    finally:
+        proc.kill()
+        proc.wait()
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "failures=0" in r.stdout
+
+
+def test_client_measure_reports_slices(server):
+    assert client(server, "policy", "slice").returncode == 0
+    assert client(server, "assoc", "1001", "1").returncode == 0
+    assert client(server, "assoc", "1002", "2").returncode == 0
+    r = client(server, "measure", "--seconds", "0.2")
+    assert r.returncode == 0, r.stderr
+    rows = {line.split()[0]: line.split() for line in r.stdout.splitlines() if line[:1] in "12" and len(line.split()) == 5}
+    assert float(rows["1"][3]) == pytest.approx(75.0, abs=0.1)
+    assert float(rows["2"][3]) == pytest.approx(25.0, abs=0.1)
+    # the policy-side share is printed under the slice table, from the per-UE grant counters
+    grants = [line for line in r.stdout.splitlines() if line.startswith("policy grants in window")]
+    assert len(grants) == 1 and "1:" in grants[0] and "2:" in grants[0], r.stdout
+
+
+@pytest.mark.parametrize("args", [("weight", "1001", "0"), ("weight", "9999", "10"), ("cap", "1001", "3"), ("weight", "zz", "10"),
+                                  ("slice", "9", "weight", "10"), ("slice", "1", "weight", "0"), ("slice", "1", "cap", "3"),
+                                  ("assoc", "9999", "1"), ("assoc", "1001", "8"), ("assoc", "1001", "x"),
+                                  ("nssai-map", "1", "none", "8"), ("nssai-map", "300", "none", "1"), ("nssai-map", "1", "zz", "1"),
+                                  ("nssai-map", "1", "none", "-")])
 def test_client_reports_rejections(server, args):
     r = client(server, *args)
     assert r.returncode == 1 and "ERROR" in r.stderr

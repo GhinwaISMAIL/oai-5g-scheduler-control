@@ -20,6 +20,8 @@
 
 set -e
 
+source "$(dirname "${BASH_SOURCE[0]}")/slice-lib.sh"
+
 NUM_CELLS="${1:-1}"
 UES_PER_CELL="${2:-2}"
 BASE_SQL="${3:-/local/repository/etc/oai_db.sql}"
@@ -45,10 +47,15 @@ sed '/-- BEGIN GENERATED SUBSCRIBERS/,/-- END GENERATED SUBSCRIBERS/d' \
   echo ""
   echo "-- BEGIN GENERATED SUBSCRIBERS"
   echo "-- ${NUM_CELLS} cells x ${UES_PER_CELL} UEs = ${TOTAL} subscribers"
-  echo "-- PLMN 208/99, SST=1 SD=0xffffff, DNN=oai, dynamic PDU addressing"
+  if second_slice_enabled; then
+      echo "-- PLMN 208/99, SST=1 and SST=2 (SD=0xffffff), DNN=oai, dynamic PDU addressing"
+  else
+      echo "-- PLMN 208/99, SST=1 SD=0xffffff, DNN=oai, dynamic PDU addressing"
+  fi
 
   for i in $(seq 0 $((TOTAL - 1))); do
       IMSI=$((IMSI_BASE + i))
+      SST=$(ue_sst $((i % UES_PER_CELL + 1)) "${UES_PER_CELL}")
 
       # Remove any stale row for this IMSI from the base dump, then insert.
       echo "DELETE FROM \`AuthenticationSubscription\` WHERE \`ueid\` = '${IMSI}';"
@@ -58,7 +65,7 @@ sed '/-- BEGIN GENERATED SUBSCRIBERS/,/-- END GENERATED SUBSCRIBERS/d' \
 INSERT INTO \`AuthenticationSubscription\` (\`ueid\`, \`authenticationMethod\`, \`encPermanentKey\`, \`protectionParameterId\`, \`sequenceNumber\`, \`authenticationManagementField\`, \`algorithmId\`, \`encOpcKey\`, \`encTopcKey\`, \`vectorGenerationInHss\`, \`n5gcAuthMethod\`, \`rgAuthenticationInd\`, \`supi\`) VALUES
 ('${IMSI}', '5G_AKA', '${KEY}', '${KEY}', '{"sqn": "000000000020", "sqnScheme": "NON_TIME_BASED", "lastIndexes": {"ausf": 0}}', '8000', 'milenage', '${OPC}', NULL, NULL, NULL, NULL, '${IMSI}');
 INSERT INTO \`SessionManagementSubscriptionData\` (\`ueid\`, \`servingPlmnid\`, \`singleNssai\`, \`dnnConfigurations\`) VALUES
-('${IMSI}', '${PLMN}', '{\\"sst\\": 1, \\"sd\\": \\"16777215\\"}', '{\\"oai\\":{\\"pduSessionTypes\\":{\\"defaultSessionType\\": \\"IPV4\\"},\\"sscModes\\":{\\"defaultSscMode\\": \\"SSC_MODE_1\\"},\\"5gQosProfile\\":{\\"5qi\\": 9,\\"arp\\":{\\"priorityLevel\\": 1,\\"preemptCap\\": \\"NOT_PREEMPT\\",\\"preemptVuln\\":\\"PREEMPTABLE\\"},\\"priorityLevel\\":1},\\"sessionAmbr\\":{\\"uplink\\":\\"200Mbps\\",\\"downlink\\":\\"400Mbps\\"}}}');
+('${IMSI}', '${PLMN}', '{\\"sst\\": ${SST}, \\"sd\\": \\"16777215\\"}', '{\\"oai\\":{\\"pduSessionTypes\\":{\\"defaultSessionType\\": \\"IPV4\\"},\\"sscModes\\":{\\"defaultSscMode\\": \\"SSC_MODE_1\\"},\\"5gQosProfile\\":{\\"5qi\\": 9,\\"arp\\":{\\"priorityLevel\\": 1,\\"preemptCap\\": \\"NOT_PREEMPT\\",\\"preemptVuln\\":\\"PREEMPTABLE\\"},\\"priorityLevel\\":1},\\"sessionAmbr\\":{\\"uplink\\":\\"200Mbps\\",\\"downlink\\":\\"400Mbps\\"}}}');
 SQLEOF
   done
 

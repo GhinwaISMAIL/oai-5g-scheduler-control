@@ -42,12 +42,24 @@ pc.defineParameter("gnb_ctrl_image",
                    "Pre-built controllable gNB image to pull instead of building it on the cell node "
                    "(the tag ends with a hash of gnb/src and gnb/patches; empty = build on the node, "
                    "about 25 minutes; if the pull fails the node builds it)",
-                   portal.ParameterType.STRING, "ghinwa555/oai-gnb-ctrl:70508eba-c8747dfc6bc3")
+                   portal.ParameterType.STRING, "ghinwa555/oai-gnb-ctrl:70508eba-30dbb89f384a")
+
+pc.defineParameter("second_slice",
+                   "Second slice: add S-NSSAI SST 2 (no SD) to the gNB, the core and the subscribers; "
+                   "the first half of the UEs (rounded up) attach with SST 1, the others with SST 2. "
+                   "Needs at least 2 UEs per cell",
+                   portal.ParameterType.BOOLEAN, False)
 
 params = pc.bindParameters()
 
 if params.ues_per_cell < 1:
     pc.reportError(portal.ParameterError("ues_per_cell must be >= 1", ["ues_per_cell"]))
+if params.controllable_scheduler and params.ues_per_cell > 32:
+    pc.reportError(portal.ParameterError(
+        "ues_per_cell must be <= 32 with the controllable scheduler (it keeps 32 UE entries)",
+        ["ues_per_cell"]))
+if params.second_slice and params.ues_per_cell < 2:
+    pc.reportError(portal.ParameterError("second_slice needs ues_per_cell >= 2", ["second_slice", "ues_per_cell"]))
 if params.channel_type not in ("AWGN", "TDL_A", "TDL_B", "TDL_C", "EPA", "EVA", "ETU"):
     pc.reportError(portal.ParameterError(
         "channel_type must be AWGN, TDL_A, TDL_B, TDL_C, EPA, EVA, or ETU",
@@ -77,8 +89,10 @@ def add_iface(node, ip):
 
 def setup(node, role, index):
     env = ""
+    if params.second_slice:
+        env = "SECOND_SLICE=1 "
     if role == "cell" and params.controllable_scheduler:
-        env = "GNB_CTRL=1 "
+        env += "GNB_CTRL=1 "
         if params.gnb_ctrl_image:
             env += "GNB_CTRL_IMAGE=%s " % params.gnb_ctrl_image
     node.addService(rspec.Execute(

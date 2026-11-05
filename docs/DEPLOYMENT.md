@@ -201,7 +201,30 @@ cd /opt/oai-src/openair2/E2AP/flexric
 ./build/examples/xApp/c/ctrl/xapp_sched_ctrl policy wshare
 ./build/examples/xApp/c/ctrl/xapp_sched_ctrl weight <rnti> 3000
 ./build/examples/xApp/c/ctrl/xapp_sched_ctrl cap <rnti> 20
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl policy slice
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl slice-weight 1 3000
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl slice-cap 2 30
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl assoc <rnti> 1          # none removes the association
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl nssai-map 2 none 1      # S-NSSAI rule, sd in hex or none
 ./build/examples/xApp/c/ctrl/xapp_sched_ctrl reset
+```
+
+The same xApp sends the standard slice message (ran function 145), see `SCHEDULER_CONTROL.md`:
+
+```bash
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl sm-add nvs 1:0.75 2:0.25   # slices with weights 750 and 250
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl sm-assoc <rnti>:1 <rnti>:2
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl sm-del 2
+./build/examples/xApp/c/ctrl/xapp_sched_ctrl sm-get                    # print the slice indication
+```
+
+After a change of `xapp/xapp_sched_ctrl.c` on a running reservation, only the xApp has to be
+rebuilt on the core node; the gNB image does not contain it:
+
+```bash
+cd /local/repository && sudo git pull --ff-only
+sudo python3 bin/patch-flexric-sched-ctrl.py /opt/oai-src/openair2/E2AP/flexric
+cd /opt/oai-src/openair2/E2AP/flexric/build && sudo make xapp_sched_ctrl
 ```
 
 `<rnti>` is the hexadecimal RNTI printed by `bin/sched-ctl.py map` on the cell node;
@@ -225,3 +248,26 @@ Before changing any policy repeat the traffic test with the new image and policy
 `bin/sched-ctl.py` as described in `SCHEDULER_CONTROL.md` and compare the shares
 reported by `measure` with the traffic counters at the receivers over the same
 interval.
+
+## Second slice (two S-NSSAIs)
+
+The profile parameter `second_slice` (default off, needs at least two UEs per cell) adds the S-NSSAI
+SST 2 without SD next to SST 1: in the gNB `snssaiList`, in the AMF, SMF and UPF configuration and in the
+subscribers. The first half of the UEs (rounded up) attach with SST 1, the others with SST 2. With the
+parameter off nothing changes.
+
+The core then runs from generated copies of its configuration
+(`etc/mini_nonrf_config.second.yaml`, `etc/docker-compose-core.second.yaml`, written by
+`bin/gen-second-slice.py`; the tracked files are not modified). Instantiate the profile with the
+parameter on, or on a running reservation re-run the setup, core node first and then the cell node (the
+core network and the RIC restart, so the gNB and the UEs restart too):
+
+```bash
+cd /local/repository
+sudo SECOND_SLICE=1 bash bin/node-setup.sh core 0 1 4 uniform AWGN >> /local/logs/setup.log 2>&1   # core node
+sudo SECOND_SLICE=1 GNB_CTRL=1 bash bin/node-setup.sh cell 1 1 4 uniform AWGN >> /local/logs/setup.log 2>&1   # cell node
+```
+
+Check that the UEs registered with the right slice: once a slice weight or a rule is set,
+`python3 bin/sched-ctl.py status` shows the S-NSSAI of every UE in the `nssai` column (`1:ffffff` or `2:ffffff`). Procedure and expected values:
+`SLICING_LIVE_TEST.md`, run 9.

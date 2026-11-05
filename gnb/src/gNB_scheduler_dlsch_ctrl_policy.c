@@ -13,6 +13,9 @@
  *   wshare  the free block of every slot is split between all backlogged UEs
  *           in proportion to their weights (frequency-domain weighted share),
  *           bounded by each UE's demand and optional per-UE cap
+ *   slice   UEs are grouped in slices (by RNTI association or by S-NSSAI); the
+ *           slice that has received the fewest resource blocks relative to its
+ *           weight takes the slot, inside a slice the UE by UE weight
  *
  * HARQ retransmissions and UEs that only need a MAC control element are served
  * before new data in every mode, exactly as in the stock policy.
@@ -47,7 +50,6 @@
 #include "openair2/LAYER2/nr_rlc/nr_rlc_oai_api.h"
 #include "common/utils/LOG/log.h"
 
-#define CTRL_PRUNE_PERIOD 256
 #define CTRL_DEFAULT_PORT 9099
 #define CTRL_DEFAULT_ADDR "127.0.0.1"
 
@@ -159,55 +161,115 @@ static bool is_new_data(const nr_dl_candidate_t *c)
 /* Sequential policies: new-data UEs are visited one after the other and each
  * takes what it needs from the largest free block, so with saturated queues the
  * first UE takes the whole slot.
- *   rr  : RNTI order starting after the UE that led last time
- *   wrr : least granted-resource-blocks-per-weight first (ties: lower RNTI) */
-static int ctrl_sequential(const nr_dl_sched_params_t *params, nr_dl_candidate_t *candidates, int n_candidates, int n_sched, bool by_deficit)
+ *   rr    : RNTI order starting after the UE that led last time
+ *   wrr   : least granted-resource-blocks-per-weight first (ties: lower RNTI)
+ *   slice : least granted-resource-blocks-per-weight of the UE's slice first, then
+ *           of the UE inside the slice (ties: lower RNTI) */
+enum { SEQ_RR = 0, SEQ_WRR = 1, SEQ_SLICE = 2 };
+
+typedef struct {
+  nr_dl_candidate_t *c;
+  int slice;
+  double k1; /* first sort key: deficit of the slice (slice mode) or of the UE (wrr) */
+  double k2; /* second sort key: deficit of the UE (slice mode) */
+} seq_item_t;
+
+static bool seq_before(const seq_item_t *a, const seq_item_t *b)
 {
-  nr_dl_candidate_t *order[MAX_MOBILES_PER_GNB];
+  if (a->k1 != b->k1)
+    return a->k1 < b->k1;
+  if (a->k2 != b->k2)
+    return a->k2 < b->k2;
+  return a->c->rnti < b->c->rnti;
+}
+
+static int ctrl_sequential(const nr_dl_sched_params_t *params, nr_dl_candidate_t *candidates, int n_candidates, int n_sched, int mode)
+{
+  seq_item_t order[MAX_MOBILES_PER_GNB];
   int n = 0;
+  uint8_t backlogged[NR_CTRL_MAX_SLICE] = {0};
   FOR_EACH_CANDIDATE(c, candidates, n_candidates)
-  if (is_new_data(c) && n < MAX_MOBILES_PER_GNB)
-    order[n++] = c;
+  if (is_new_data(c) && n < MAX_MOBILES_PER_GNB) {
+    order[n].c = c;
+    order[n].slice = nr_ctrl_slice_of(&g_state, c->rnti, NULL);
+    backlogged[order[n].slice] = 1;
+    n++;
+  }
+  if (mode == SEQ_SLICE)
+    nr_ctrl_slice_activity(&g_state, backlogged);
+  if (mode != SEQ_RR && n > 1) {
+    /* a UE that is new or has had little to send does not hold unlimited credit against its peers */
+    uint16_t rnti[MAX_MOBILES_PER_GNB];
+    uint8_t group[MAX_MOBILES_PER_GNB];
+    for (int i = 0; i < n; i++) {
+      rnti[i] = order[i].c->rnti;
+      group[i] = (mode == SEQ_SLICE) ? (uint8_t)order[i].slice : 0;
+    }
+    nr_ctrl_ue_activity(&g_state, rnti, group, n);
+  }
   if (n == 0)
     return n_sched;
 
-  /* insertion sort: by RNTI (rr) or by deficit then RNTI (wrr) */
+  for (int i = 0; i < n; i++) {
+    double ue_deficit = (mode == SEQ_RR) ? 0.0 : nr_ctrl_deficit(&g_state, order[i].c->rnti);
+    if (mode == SEQ_SLICE) {
+      order[i].k1 = nr_ctrl_slice_deficit(&g_state, order[i].slice);
+      order[i].k2 = ue_deficit;
+    } else {
+      order[i].k1 = ue_deficit;
+      order[i].k2 = 0.0;
+    }
+  }
+  /* insertion sort, smallest key first, RNTI as the last tie-break */
   for (int i = 1; i < n; i++) {
-    nr_dl_candidate_t *k = order[i];
-    double dk = by_deficit ? nr_ctrl_deficit(&g_state, k->rnti) : 0.0;
+    seq_item_t k = order[i];
     int j = i - 1;
-    while (j >= 0) {
-      double dj = by_deficit ? nr_ctrl_deficit(&g_state, order[j]->rnti) : 0.0;
-      if (dj < dk || (dj == dk && order[j]->rnti <= k->rnti))
-        break;
+    while (j >= 0 && seq_before(&k, &order[j])) {
       order[j + 1] = order[j];
       j--;
     }
     order[j + 1] = k;
   }
   int first = 0;
-  if (!by_deficit) {
+  if (mode == SEQ_RR) {
     /* rotate so the first UE with RNTI above the last leader leads */
-    while (first < n && order[first]->rnti <= g_state.rr_last_rnti)
+    while (first < n && order[first].c->rnti <= g_state.rr_last_rnti)
       first++;
     if (first == n)
       first = 0;
   }
 
   bool led = false;
+  int slice_used[NR_CTRL_MAX_SLICE] = {0}; /* resource blocks given to each slice in this call */
   for (int k = 0; k < n; k++) {
-    nr_dl_candidate_t *cand = order[(first + k) % n];
+    const seq_item_t *it = &order[(first + k) % n];
+    nr_dl_candidate_t *cand = it->c;
     int cap = nr_ctrl_cap_of(&g_state, cand->rnti);
     uint16_t *vrb_map = params->vrb_map[cand->alloc_beam_idx];
     int rbStart;
     int max_rb = find_largest_free_block(vrb_map, cand->alloc_slbitmap, cand->bwp_start, cand->bwp_size, &rbStart);
     if (cap > 0 && max_rb > cap)
       max_rb = cap;
+    if (mode == SEQ_SLICE) {
+      /* the slice cap limits what all UEs of the slice together take in this call */
+      int scap = nr_ctrl_slice_cap(&g_state, it->slice);
+      if (scap > 0) {
+        int left = scap - slice_used[it->slice];
+        if (left < NR_CTRL_MIN_RB)
+          continue;
+        if (max_rb > left)
+          max_rb = left;
+      }
+    }
     if (max_rb < NR_CTRL_MIN_RB)
       continue;
     int rbSize = ctrl_demand_rbs(params, cand, max_rb);
     if (ctrl_commit(params, cand, rbStart, rbSize, cand->sched_pdsch.mcs)) {
       nr_ctrl_account(&g_state, cand->rnti, rbSize);
+      if (mode == SEQ_SLICE) {
+        nr_ctrl_account_slice(&g_state, it->slice, rbSize);
+        slice_used[it->slice] += rbSize;
+      }
       if (!led) {
         g_state.rr_last_rnti = cand->rnti;
         led = true;
@@ -376,7 +438,7 @@ static int ctrl_wshare_adaptive(const nr_dl_sched_params_t *params, nr_dl_candid
   if (shared)
     n_sched = ctrl_wshare(params, candidates, n_candidates, n_sched);
   else
-    n_sched = ctrl_sequential(params, candidates, n_candidates, n_sched, true);
+    n_sched = ctrl_sequential(params, candidates, n_candidates, n_sched, SEQ_WRR);
   if (npool < 2)
     return n_sched;
 
@@ -413,11 +475,15 @@ int nr_dl_ctrl_policy(const nr_dl_sched_params_t *params, nr_dl_candidate_t *can
   g_state.calls++;
   if (params->slot >= 0 && params->slot < NR_CTRL_SLOTS)
     g_state.slot_calls[params->slot]++;
-  if (g_state.calls % CTRL_PRUNE_PERIOD == 0) {
-    nr_ctrl_ue_view_t view[MAX_MOBILES_PER_GNB];
-    int nv = build_view(g_mac, view, MAX_MOBILES_PER_GNB);
-    nr_ctrl_prune(&g_state, view, nv);
-  }
+  /* entries of UEs that left or came back as a new context, before anything uses them */
+  nr_ctrl_ue_view_t view[MAX_MOBILES_PER_GNB];
+  const int nv = build_view(g_mac, view, MAX_MOBILES_PER_GNB);
+  nr_ctrl_sync(&g_state, view, nv);
+
+  /* remember the S-NSSAI of every UE the MAC offers, for membership by S-NSSAI and for read-back */
+  FOR_EACH_CANDIDATE(c, candidates, n_candidates)
+  nr_ctrl_note_nssai(&g_state, c->rnti, c->nssai.sst, c->nssai.sd);
+  nr_ctrl_sync_slices(&g_state, view, nv);
 
   if (g_state.policy == NR_CTRL_POLICY_PF)
     return nr_dl_proportional_fair(params, candidates, n_candidates);
@@ -427,9 +493,11 @@ int nr_dl_ctrl_policy(const nr_dl_sched_params_t *params, nr_dl_candidate_t *can
     return n_mandatory;
   int n_sched;
   if (g_state.policy == NR_CTRL_POLICY_RR)
-    n_sched = ctrl_sequential(params, candidates, n_candidates, n_mandatory, false);
+    n_sched = ctrl_sequential(params, candidates, n_candidates, n_mandatory, SEQ_RR);
   else if (g_state.policy == NR_CTRL_POLICY_WRR)
-    n_sched = ctrl_sequential(params, candidates, n_candidates, n_mandatory, true);
+    n_sched = ctrl_sequential(params, candidates, n_candidates, n_mandatory, SEQ_WRR);
+  else if (g_state.policy == NR_CTRL_POLICY_SLICE)
+    n_sched = ctrl_sequential(params, candidates, n_candidates, n_mandatory, SEQ_SLICE);
   else
     n_sched = ctrl_wshare_adaptive(params, candidates, n_candidates, n_mandatory);
   if (n_sched - n_mandatory >= 2)
@@ -468,11 +536,12 @@ static void *ctrl_thread(void *arg)
       continue; /* timeout or interruption */
     cmd[r] = '\0';
 
-    char reply[4096];
+    char reply[NR_CTRL_REPLY_SIZE];
     int len;
     NR_SCHED_LOCK(&g_mac->sched_lock);
     nr_ctrl_ue_view_t view[MAX_MOBILES_PER_GNB];
     int nv = build_view(g_mac, view, MAX_MOBILES_PER_GNB);
+    nr_ctrl_sync(&g_state, view, nv);
     uint32_t before = g_state.version;
     len = nr_ctrl_handle(&g_state, cmd, view, nv, reply, sizeof(reply));
     uint32_t after = g_state.version;

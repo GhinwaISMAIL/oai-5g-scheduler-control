@@ -32,69 +32,29 @@ PATCH_MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PATCH_MODULE)
 
 MAGIC = 0x5343
-POLICIES = {"pf": 0, "rr": 1, "wshare": 2, "wrr": 3}
+POLICIES = {"pf": 0, "rr": 1, "wshare": 2, "wrr": 3, "slice": 4}
 
-# Stand-ins that have the shape of the FlexRIC declarations the xApp uses.
-STAND_IN_API = r"""
-#ifndef STAND_IN_E42_XAPP_API_H
-#define STAND_IN_E42_XAPP_API_H
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-typedef struct { int unused; } fr_args_t;
-typedef enum { ngran_gNB = 2, ngran_gNB_DU = 4, ngran_eNB = 0 } ngran_node_t;
-typedef struct { ngran_node_t type; } global_e2_node_id_t;
-typedef struct { uint16_t id; } sm_ran_function_t;
-typedef struct { global_e2_node_id_t id; size_t len_rf; sm_ran_function_t *rf; } e2_node_connected_xapp_t;
-typedef struct { int len; e2_node_connected_xapp_t *n; } e2_node_arr_xapp_t;
-typedef struct { uint32_t dummy; } mac_ctrl_hdr_t;
-typedef struct { uint32_t action; } mac_ctrl_msg_t;
-typedef struct { mac_ctrl_hdr_t hdr; mac_ctrl_msg_t msg; } mac_ctrl_req_data_t;
-typedef struct { bool success; } sm_ans_xapp_t;
-
-static inline fr_args_t init_fr_args(int argc, char *argv[]) { (void)argc; (void)argv; fr_args_t a = {0}; return a; }
-static inline void init_xapp_api(fr_args_t const *a) { (void)a; }
-static inline bool try_stop_xapp_api(void) { return true; }
-static inline e2_node_arr_xapp_t e2_nodes_xapp_api(void)
-{
-  /* node 0: a gNB with the MAC service model; node 1: an eNB without it;
-   * node 2: a gNB that only has another service model */
-  static sm_ran_function_t mac[] = {{142}, {2}};
-  static sm_ran_function_t kpm[] = {{2}};
-  static e2_node_connected_xapp_t nodes[3];
-  nodes[0] = (e2_node_connected_xapp_t){{ngran_gNB}, 2, mac};
-  nodes[1] = (e2_node_connected_xapp_t){{ngran_eNB}, 2, mac};
-  nodes[2] = (e2_node_connected_xapp_t){{ngran_gNB}, 1, kpm};
-  int count = getenv("STAND_IN_NODES") ? atoi(getenv("STAND_IN_NODES")) : 3;
-  return (e2_node_arr_xapp_t){count, nodes};
-}
-static inline void free_e2_node_arr_xapp(e2_node_arr_xapp_t *a) { (void)a; }
-static inline sm_ans_xapp_t control_sm_xapp_api(global_e2_node_id_t *id, uint32_t rf_id, void *wr)
-{
-  mac_ctrl_req_data_t *r = wr;
-  (void)id;
-  printf("STAND_IN control rf=%u hdr=%08x msg=%08x\n", (unsigned)rf_id, (unsigned)r->hdr.dummy, (unsigned)r->msg.action);
-  return (sm_ans_xapp_t){getenv("STAND_IN_REFUSE") == NULL};
-}
-#endif
-"""
-
-STAND_IN_DEFER = r"""
-#ifndef STAND_IN_DEFER_H
-#define STAND_IN_DEFER_H
-#define STAND_IN_JOIN2(a, b) a##b
-#define STAND_IN_JOIN(a, b) STAND_IN_JOIN2(a, b)
-#define defer(code) \
-  void STAND_IN_JOIN(defer_fn_, __LINE__)(int *u) { (void)u; code; } \
-  int STAND_IN_JOIN(defer_var_, __LINE__) __attribute__((cleanup(STAND_IN_JOIN(defer_fn_, __LINE__)))) = 0
-#endif
-"""
+# Stand-ins that have the shape of the FlexRIC declarations the xApp uses: headers in
+# xapp/test/flexric_stub and a fake RIC in xapp/test/stub_api.c (see its header comment).
+STUB = REPOSITORY / "xapp" / "test"
+SLICE_STUB = REPOSITORY / "gnb" / "test" / "flexric_stub"
 
 
-def encode(verb: str, a1: str = "", a2: str = "") -> tuple[int, int]:
+def encode(verb: str, a1: str = "", a2: str = "", a3: str = "") -> tuple[int, int]:
     """The documented encoding, written from the specification in nr_dl_ctrl_e2.h."""
+
+    def slice_arg(text: str) -> int:
+        return 0xFF if text == "none" else int(text)
+
+    if verb == "slice-weight":
+        return (MAGIC << 16) | (int(a1) << 8) | 5, int(a2)
+    if verb == "slice-cap":
+        return (MAGIC << 16) | (int(a1) << 8) | 6, int(a2)
+    if verb == "assoc":
+        return (MAGIC << 16) | (slice_arg(a2) << 8) | 7, int(a1, 16) << 16
+    if verb == "nssai-map":
+        sd = 0xFFFFFF if a2 == "none" else int(a2, 16)
+        return (MAGIC << 16) | (slice_arg(a3) << 8) | 8, (int(a1) << 24) | sd
     if verb == "policy":
         return (MAGIC << 16) | 1, POLICIES[a1]
     if verb == "weight":
@@ -114,16 +74,15 @@ class XappTest(unittest.TestCase):
         cls.directory = tempfile.TemporaryDirectory()
         root = Path(cls.directory.name)
         ctrl = root / "examples" / "xApp" / "c" / "ctrl"
-        (root / "src" / "xApp").mkdir(parents=True)
-        (root / "src" / "util" / "alg_ds" / "alg").mkdir(parents=True)
+        shutil.copytree(STUB / "flexric_stub" / "src", root / "src")
         ctrl.mkdir(parents=True)
-        (root / "src" / "xApp" / "e42_xapp_api.h").write_text(STAND_IN_API)
-        (root / "src" / "util" / "alg_ds" / "alg" / "defer.h").write_text(STAND_IN_DEFER)
         shutil.copyfile(XAPP, ctrl / XAPP.name)
         shutil.copyfile(HEADER, ctrl / HEADER.name)
         cls.binary = root / "xapp_sched_ctrl"
         build = subprocess.run(
-            ["gcc", "-std=gnu11", "-Wall", "-Wextra", "-Werror", str(ctrl / XAPP.name), "-o", str(cls.binary)],
+            ["gcc", "-std=gnu11", "-g", "-Wall", "-Wextra", "-Werror", "-fsanitize=address,undefined",
+             "-I", str(SLICE_STUB), "-I", str(STUB / "flexric_stub"), str(ctrl / XAPP.name), str(STUB / "stub_api.c"),
+             "-o", str(cls.binary), "-lpthread"],
             capture_output=True,
             text=True,
         )
@@ -170,6 +129,26 @@ class XappTest(unittest.TestCase):
     def test_reset(self) -> None:
         self.check_command("reset")
 
+    def test_slice_commands(self) -> None:
+        self.check_command("slice-weight", "0", "1")
+        self.check_command("slice-weight", "3", "3000")
+        self.check_command("slice-weight", "7", "65535")
+        self.check_command("slice-cap", "2", "30")
+        self.check_command("slice-cap", "2", "0")
+        self.check_command("slice-cap", "7", "275")
+        self.check_command("assoc", "56a2", "1")
+        self.check_command("assoc", "56a2", "0")
+        self.check_command("assoc", "56a2", "none")
+        self.check_command("nssai-map", "1", "none", "2")
+        self.check_command("nssai-map", "2", "123456", "7")
+        self.check_command("nssai-map", "255", "0", "none")
+
+    def test_slice_words_match_the_documented_layout(self) -> None:
+        self.assertEqual(encode("slice-weight", "3", "3000"), (0x53430305, 3000))
+        self.assertEqual(encode("assoc", "1001", "none"), (0x5343FF07, 0x10010000))
+        self.assertEqual(encode("nssai-map", "2", "none", "3"), (0x53430308, 0x02FFFFFF))
+        self.assertEqual(encode("policy", "slice"), (0x53430001, 4))
+
     def test_invalid_commands_send_nothing(self) -> None:
         invalid = [
             [],
@@ -185,6 +164,21 @@ class XappTest(unittest.TestCase):
             ["cap", "e350", "4"],
             ["cap", "e350", "276"],
             ["cap", "*", "20"],
+            ["slice-weight", "8", "5"],
+            ["slice-weight", "1", "0"],
+            ["slice-weight", "1", "65536"],
+            ["slice-weight", "1"],
+            ["slice-cap", "1", "4"],
+            ["slice-cap", "1", "276"],
+            ["assoc", "e350", "8"],
+            ["assoc", "0", "1"],
+            ["assoc", "e350"],
+            ["nssai-map", "256", "none", "1"],
+            ["nssai-map", "1", "1000000", "1"],
+            ["nssai-map", "1", "zz", "1"],
+            ["nssai-map", "1", "none", "9"],
+            ["nssai-map", "1", "none"],
+            ["policy", "slice", "extra", "words", "here"],
             ["frobnicate"],
         ]
         for args in invalid:
@@ -193,6 +187,144 @@ class XappTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 2, result.stdout)
                 self.assertNotIn("STAND_IN", result.stdout)
                 self.assertIn("usage:", result.stderr)
+
+    # ---- the standard slice service model (verbs sm-add, sm-del, sm-assoc, sm-get) ----
+
+    def slice_run(self, *args: str, **env: str) -> subprocess.CompletedProcess[str]:
+        result = self.run_xapp(*args, **env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # node 0 is the only gNB with the slice service model; the eNB and the gNB without it are skipped
+        self.assertEqual(result.stdout.count("STAND_IN control rf=145"), 1, result.stdout)
+        self.assertIn("Node 1: no slice service model on a gNB, skipped", result.stdout)
+        self.assertIn("Node 2: no slice service model on a gNB, skipped", result.stdout)
+        self.assertIn("Slice message delivered", result.stdout)
+        return result
+
+    def test_sm_add_nvs(self) -> None:
+        out = self.slice_run("sm-add", "nvs", "1:0.75", "2:0.25").stdout
+        self.assertIn(
+            "STAND_IN control rf=145 ADD\n"
+            "  dl sched=PF slices=2\n"
+            "  slice id=1 label=slice-1 sched=PF nvs-capacity 0.750\n"
+            "  slice id=2 label=slice-2 sched=PF nvs-capacity 0.250\n"
+            "  ul sched=round_robin_ul slices=0\n",
+            out,
+        )
+        self.assertIn("Node 0: slice message (2 items) acknowledged", out)
+
+    def test_sm_add_static(self) -> None:
+        out = self.slice_run("sm-add", "static", "3:0-9", "5:10-30").stdout
+        self.assertIn("  slice id=3 label=slice-3 sched=PF static 0 9\n  slice id=5 label=slice-5 sched=PF static 10 30\n", out)
+
+    def test_sm_add_none_sends_no_slice(self) -> None:
+        out = self.slice_run("sm-add", "none").stdout
+        self.assertIn("STAND_IN control rf=145 ADD\n  dl sched=PF slices=0\n  ul sched=round_robin_ul slices=0\n", out)
+        self.assertIn("slice message (0 items)", out)
+
+    def test_sm_del(self) -> None:
+        out = self.slice_run("sm-del", "3", "4", "7").stdout
+        self.assertIn("STAND_IN control rf=145 DEL dl=3,4,7 ul=0\n", out)
+
+    def test_sm_assoc_takes_the_rnti_in_hexadecimal(self) -> None:
+        out = self.slice_run("sm-assoc", "9e82:1", "53E4:2", "1:0").stdout
+        self.assertIn(
+            "STAND_IN control rf=145 ASSOC\n"
+            "  ue rnti=0x9e82 dl=1 ul=0\n"
+            "  ue rnti=0x53e4 dl=2 ul=0\n"
+            "  ue rnti=0x0001 dl=0 ul=0\n",
+            out,
+        )
+
+    def test_sm_values_are_left_to_the_gnb(self) -> None:
+        # only the syntax is checked here: the gNB refuses these and says why in its log
+        out = self.slice_run("sm-add", "nvs", "1:1.5", "9:0", "4294967295:0.5").stdout
+        self.assertIn("slice id=1 label=slice-1 sched=PF nvs-capacity 1.500", out)
+        self.assertIn("slice id=9 label=slice-9 sched=PF nvs-capacity 0.000", out)
+        self.assertIn("slice id=4294967295 label=slice-4294967295 sched=PF nvs-capacity 0.500", out)
+        self.slice_run("sm-add", "static", "3:0-3")
+        self.slice_run("sm-del", "8")
+
+    def test_sm_up_to_32_items(self) -> None:
+        self.slice_run("sm-del", *[str(i) for i in range(32)])
+        result = self.run_xapp("sm-del", *[str(i) for i in range(33)])
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("too many items", result.stderr)
+
+    def test_sm_get_prints_the_indication(self) -> None:
+        result = self.run_xapp("sm-get")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(
+            "Node 0: slice indication\n"
+            "scheduler: wrr\n"
+            "slices: 2\n"
+            "  slice 1 label slice-1 sched wrr nvs capacity pct_reserved 0.750\n"
+            "  slice 2 label slice-2 sched wrr nvs capacity pct_reserved 0.250\n"
+            "ues: 2\n"
+            "  rnti 0x9e82 dl slice 1\n"
+            "  rnti 0x53e4 dl slice 2\n",
+            result.stdout,
+        )
+        self.assertIn("Node 1: no slice service model on a gNB, skipped", result.stdout)
+        self.assertTrue(result.stdout.endswith("Slice indication read\n"))
+        self.assertNotIn("STAND_IN control", result.stdout)
+
+    def test_sm_get_without_an_indication_fails(self) -> None:
+        result = self.run_xapp("sm-get", STAND_IN_SILENT="1")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no slice indication within 5 s", result.stdout)
+
+    def test_sm_invalid_commands_send_nothing(self) -> None:
+        invalid = [
+            ["sm-add"],
+            ["sm-add", "nvs"],
+            ["sm-add", "bogus", "1:0.5"],
+            ["sm-add", "none", "1:0.5"],
+            ["sm-add", "nvs", "1"],
+            ["sm-add", "nvs", "1:"],
+            ["sm-add", "nvs", ":0.5"],
+            ["sm-add", "nvs", "1:abc"],
+            ["sm-add", "nvs", "1:0.5x"],
+            ["sm-add", "nvs", "1:nan"],
+            ["sm-add", "nvs", "1:inf"],
+            ["sm-add", "nvs", "-1:0.5"],
+            ["sm-add", "nvs", "4294967296:0.5"],
+            ["sm-add", "static", "1:5"],
+            ["sm-add", "static", "1:5-"],
+            ["sm-add", "static", "1:-5"],
+            ["sm-add", "static", "1:5-x"],
+            ["sm-del"],
+            ["sm-del", "-1"],
+            ["sm-del", "x"],
+            ["sm-del", "1:2"],
+            ["sm-assoc"],
+            ["sm-assoc", "9e82"],
+            ["sm-assoc", "0:1"],
+            ["sm-assoc", "12345:1"],
+            ["sm-assoc", "zz:1"],
+            ["sm-assoc", "9e82:x"],
+            ["sm-get", "now"],
+            ["sm-bogus"],
+        ]
+        for args in invalid:
+            with self.subTest(args=args):
+                result = self.run_xapp(*args)
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertNotIn("STAND_IN", result.stdout)
+                self.assertIn("error:", result.stderr)
+                self.assertIn("usage:", result.stderr)
+
+    def test_sm_refused_control_is_reported(self) -> None:
+        result = self.run_xapp("sm-del", "3", STAND_IN_REFUSE="1")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("not acknowledged", result.stdout)
+        self.assertIn("Slice message not delivered", result.stdout)
+
+    def test_sm_without_a_suitable_node_is_a_failure(self) -> None:
+        result = self.run_xapp("sm-del", "3", STAND_IN_NODES="0")
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn("STAND_IN control", result.stdout)
+        result = self.run_xapp("sm-assoc", "9e82:1", STAND_IN_NODES="3")
+        self.assertEqual(result.returncode, 0)  # node 0 is a gNB with the slice model
 
     def test_refused_control_is_reported(self) -> None:
         result = self.run_xapp("policy", "pf", STAND_IN_REFUSE="1")
@@ -245,6 +377,20 @@ class OaiBuildFlagsTest(unittest.TestCase):
                 with self.subTest(fortify=fortify):
                     result = subprocess.run(
                         ["gcc", *OAI_FLAGS, fortify, "-I", str(HEADER.parent), "-c", str(source), "-o", os.devnull],
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_scheduler_sources_compile_with_the_oai_build_flags(self) -> None:
+        # the sources that go into the gNB image, against the stand-in OAI headers, with the -Werror flags of the OAI build
+        src = REPOSITORY / "gnb" / "src"
+        stub = REPOSITORY / "gnb" / "test" / "oai_stub"
+        for name in ("nr_dl_ctrl_state.c", "nr_dl_ctrl_alloc.c", "gNB_scheduler_dlsch_ctrl_policy.c"):
+            for fortify in ("-D_FORTIFY_SOURCE=0", "-D_FORTIFY_SOURCE=2", "-D_FORTIFY_SOURCE=3"):
+                with self.subTest(source=name, fortify=fortify):
+                    result = subprocess.run(
+                        ["gcc", *OAI_FLAGS, fortify, "-DMAX_MOBILES_PER_GNB=32", "-I", str(stub), "-I", str(src), "-c", str(src / name), "-o", os.devnull],
                         capture_output=True,
                         text=True,
                     )
