@@ -143,13 +143,20 @@ rule deletion deviated from its target and is not explained. The procedure and t
 
 ## Limits
 
-One cell, up to the UEs a single `nr-softmodem` serves. A weight is a share of the resource blocks
-among the UEs that have data in the same slot, not a guaranteed throughput. Uplink scheduling is not
-controlled. RFsim does not provide physical RF coverage.
-Slices: 8 slices, one UE per slot, membership by RNTI association, then by the S-NSSAI the MAC
-reports (SST 1 without SD for all UEs by default). Two different S-NSSAIs are available with `second_slice` (run on a reservation with two and with four UEs, see `docs/SLICING_LIVE_TEST.md`).
-The standard FlexRIC slice message (ADD, DEL, UE association, indication) is translated to the same commands (`docs/SCHEDULER_CONTROL.md`); run on a reservation with the stock slice xApp and with `xapp_sched_ctrl` (ADD with NVS and static slices, DEL, association, indication, refused messages).
-Not tested on the cell: a UE that attaches with a new RNTI during a run. Reused RNTIs and a full UE table are covered by the host tests only (`docs/SCHEDULER_CONTROL.md`).
+- One cell with up to 32 UEs (the controllable scheduler keeps 32 UE entries). RFsim does not provide
+  physical RF coverage. Uplink scheduling is not controlled.
+- A weight is a share of the resource blocks among the UEs that have data in the same slot, not a
+  guaranteed throughput.
+- Slices: 8 slices (0 is the default). A UE is in one slice: the one it is associated with by RNTI,
+  otherwise the one of its S-NSSAI (the first bearer), otherwise slice 0. Slices share the cell in time,
+  and a slice cap leaves the rest of the slot to the next slice. A second S-NSSAI is available with
+  `second_slice`.
+- The standard FlexRIC slice message (ADD, DEL, UE association, indication) is translated to the same
+  commands: an NVS capacity becomes a relative weight and a STATIC width a cap
+  (`docs/SCHEDULER_CONTROL.md`). It was run on a reservation with the stock slice xApp and with
+  `xapp_sched_ctrl`, including refused messages.
+- Not tested on the cell: a UE that attaches with a new RNTI during a run. Reused RNTIs and a full UE
+  table are covered by the host tests only.
 
 ## Layout
 
