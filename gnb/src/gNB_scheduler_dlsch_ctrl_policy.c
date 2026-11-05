@@ -50,7 +50,6 @@
 #include "openair2/LAYER2/nr_rlc/nr_rlc_oai_api.h"
 #include "common/utils/LOG/log.h"
 
-#define CTRL_PRUNE_PERIOD 256
 #define CTRL_DEFAULT_PORT 9099
 #define CTRL_DEFAULT_ADDR "127.0.0.1"
 
@@ -476,15 +475,15 @@ int nr_dl_ctrl_policy(const nr_dl_sched_params_t *params, nr_dl_candidate_t *can
   g_state.calls++;
   if (params->slot >= 0 && params->slot < NR_CTRL_SLOTS)
     g_state.slot_calls[params->slot]++;
-  if (g_state.calls % CTRL_PRUNE_PERIOD == 0) {
-    nr_ctrl_ue_view_t view[MAX_MOBILES_PER_GNB];
-    int nv = build_view(g_mac, view, MAX_MOBILES_PER_GNB);
-    nr_ctrl_prune(&g_state, view, nv);
-  }
+  /* entries of UEs that left or came back as a new context, before anything uses them */
+  nr_ctrl_ue_view_t view[MAX_MOBILES_PER_GNB];
+  const int nv = build_view(g_mac, view, MAX_MOBILES_PER_GNB);
+  nr_ctrl_sync(&g_state, view, nv);
 
   /* remember the S-NSSAI of every UE the MAC offers, for membership by S-NSSAI and for read-back */
   FOR_EACH_CANDIDATE(c, candidates, n_candidates)
   nr_ctrl_note_nssai(&g_state, c->rnti, c->nssai.sst, c->nssai.sd);
+  nr_ctrl_sync_slices(&g_state, view, nv);
 
   if (g_state.policy == NR_CTRL_POLICY_PF)
     return nr_dl_proportional_fair(params, candidates, n_candidates);
@@ -537,11 +536,12 @@ static void *ctrl_thread(void *arg)
       continue; /* timeout or interruption */
     cmd[r] = '\0';
 
-    char reply[4096];
+    char reply[NR_CTRL_REPLY_SIZE];
     int len;
     NR_SCHED_LOCK(&g_mac->sched_lock);
     nr_ctrl_ue_view_t view[MAX_MOBILES_PER_GNB];
     int nv = build_view(g_mac, view, MAX_MOBILES_PER_GNB);
+    nr_ctrl_sync(&g_state, view, nv);
     uint32_t before = g_state.version;
     len = nr_ctrl_handle(&g_state, cmd, view, nv, reply, sizeof(reply));
     uint32_t after = g_state.version;

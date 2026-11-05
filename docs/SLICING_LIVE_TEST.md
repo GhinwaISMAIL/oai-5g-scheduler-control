@@ -8,7 +8,7 @@ scripts, section 3 lists the runs with the expected values, section 4 holds the 
 
 The sources of the gNB image changed, so the image has to be built or pulled and the xApp on
 the core node rebuilt. The image of the current commit is on the registry
-(`ghinwa555/oai-gnb-ctrl:70508eba-3cc4a7aa00f0`), so a new reservation pulls it in a minute.
+(`ghinwa555/oai-gnb-ctrl:70508eba-30dbb89f384a`), so a new reservation pulls it in a minute.
 
 **Reservation started from the `slicing` branch** (the profile was instantiated from it): the
 nodes already run this code. The core builds the xApp by itself. The cell node pulls
@@ -373,6 +373,31 @@ Clearing: `$X sm-del 3` removes one slice, `$X sm-add none` brings all slices ba
 associations (`ADD applied (8 commands)`): `status` then shows neither the slice table nor the slice columns.
 
 At the end of the reservation: `~/x.sh reset`.
+
+**Run 14, membership changes with the updated gNB.** The sources of the gNB changed after run 13 (a slice that
+loses its last UE restarts from zero, entries of reused RNTIs are cleared, the status reply holds 32 UEs), so
+cell1 needs the new image: use the block "A newer commit of the `slicing` branch on a running reservation" in
+section 1, then redo section 2 (the RNTIs change). The core node and its xApp stay.
+With `U1` to `U4` from section 2 and `X` as in run 13:
+```bash
+~/x.sh reset
+~/x.sh policy slice
+$X sm-add nvs 1:0.75 2:0.25
+$X sm-assoc $U1:1 $U2:1 $U3:2 $U4:2
+~/dl.sh q14
+~/chk.sh q14
+```
+On cell1, after 10 s, `measure --seconds 15` must still give 75 : 25 (regression of run 13). Then empty slice 1:
+```bash
+~/x.sh assoc $U1 2; ~/x.sh assoc $U2 2
+```
+On cell1, `python3 bin/sched-ctl.py status` after 5 s: the row of slice 1 shows `granted_rbs` 0 and `ues` 0 (before the change it kept
+its earlier grants), and `measure --seconds 15` gives the four UEs 25 % each (all in slice 2). Last, put `U1` back:
+```bash
+~/x.sh assoc $U1 1
+```
+After 5 s `measure --seconds 15` must give slice 1 (`U1`) 75 % and slice 2 25 % (8.3 % for each of its three UEs), with `U1` served
+from the first window and no wait. At the end: `~/x.sh reset`. Not run yet.
 
 ## 4. Results
 

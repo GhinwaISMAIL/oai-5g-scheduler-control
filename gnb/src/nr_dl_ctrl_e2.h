@@ -41,6 +41,11 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+/* Largest reply of the control endpoint, as in nr_dl_ctrl_state.h. */
+#ifndef NR_CTRL_REPLY_SIZE
+#define NR_CTRL_REPLY_SIZE 16384
+#endif
+
 #define NR_CTRL_E2_MAGIC 0x5343u
 
 enum {
@@ -332,7 +337,7 @@ static inline int nr_ctrl_e2_send(const char *text, char *reply, size_t reply_si
   setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
   int rc = -1;
   if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) == 0 && send(fd, text, strlen(text), 0) >= 0) {
-    char buf[4096];
+    char buf[NR_CTRL_REPLY_SIZE];
     ssize_t r = recv(fd, buf, sizeof(buf) - 1, 0);
     if (r > 0) {
       buf[r] = '\0';

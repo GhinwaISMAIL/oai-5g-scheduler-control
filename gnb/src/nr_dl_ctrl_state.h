@@ -26,6 +26,11 @@
 #include <stdint.h>
 
 #define NR_CTRL_MAX_UE 32
+/* Largest reply of the control endpoint (the status of 32 UEs, the slices and the slot table is about 12 kB);
+ * every reader of the endpoint uses a buffer of this size. */
+#ifndef NR_CTRL_REPLY_SIZE
+#define NR_CTRL_REPLY_SIZE 16384
+#endif
 #define NR_CTRL_MIN_RB 5
 #define NR_CTRL_MAX_CAP 275
 #define NR_CTRL_MIN_WEIGHT 1
@@ -43,6 +48,9 @@
  * reconnects does not take every slot until its counter has caught up with its peers. */
 #define NR_CTRL_SLICE_CREDIT_RBS 2000
 #define NR_CTRL_UE_CREDIT_RBS 2000
+/* Deficit reported for a UE that has no entry because the table is full: it is served after every tracked UE
+ * of its slice instead of before them, and it is left out of the credit bound. */
+#define NR_CTRL_UNTRACKED_DEFICIT 1e18
 #define NR_CTRL_SLOTS 40 /* slot indices tracked (80 slots per frame at most 40 are kept) */
 
 enum { NR_CTRL_POLICY_PF = 0, NR_CTRL_POLICY_RR = 1, NR_CTRL_POLICY_WSHARE = 2, NR_CTRL_POLICY_WRR = 3, NR_CTRL_POLICY_SLICE = 4 };
@@ -63,6 +71,9 @@ typedef struct {
   uint8_t nssai_known;  /* the S-NSSAI below was seen on a scheduler candidate */
   uint8_t sst;
   uint32_t sd;
+  uint8_t seen;         /* the MAC counters below were read at least once */
+  uint64_t seen_rbs;    /* MAC counters at the last read; a lower value means a new UE context with this RNTI */
+  uint64_t seen_sdu_bytes;
 } nr_ctrl_ue_t;
 
 typedef struct {
@@ -72,6 +83,7 @@ typedef struct {
   uint64_t credit_rbs; /* virtual resource blocks added by the credit bound; only the ordering uses them */
   uint64_t granted_slots;
   uint8_t configured;  /* a SLICE command set its weight or cap (even to the default value) */
+  uint8_t populated;   /* some connected UE was in the slice at the last check */
 } nr_ctrl_slice_t;
 
 typedef struct {
@@ -146,6 +158,14 @@ void nr_ctrl_ue_activity(nr_ctrl_state_t *st, const uint16_t *rnti, const uint8_
 void nr_ctrl_note_commit_fail(nr_ctrl_state_t *st, uint16_t rnti, int slot, int cce);
 /* Drop entries of UEs that are no longer connected. */
 void nr_ctrl_prune(nr_ctrl_state_t *st, const nr_ctrl_ue_view_t *ues, int n_ues);
+/* Called with the scheduler lock held, from every scheduler call and before every command: an entry whose
+ * RNTI is seen again with lower MAC counters belongs to a new UE context and is cleared (the counters of one
+ * UE never decrease), entries of UEs that are gone are dropped, and the round-robin position is cleared when
+ * its UE has left.  Does not change the version. */
+void nr_ctrl_sync(nr_ctrl_state_t *st, const nr_ctrl_ue_view_t *ues, int n_ues);
+/* Called after the S-NSSAIs of the candidates are noted: a slice that had UEs and now has none starts again
+ * from zero grants and credit (its weight and cap stay). */
+void nr_ctrl_sync_slices(nr_ctrl_state_t *st, const nr_ctrl_ue_view_t *ues, int n_ues);
 /* Executes one command and writes the reply; returns the reply length. */
 int nr_ctrl_handle(nr_ctrl_state_t *st, const char *cmd, const nr_ctrl_ue_view_t *ues, int n_ues, char *reply, size_t reply_size);
 

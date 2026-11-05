@@ -78,6 +78,8 @@ int nr_ctrl_cap_of(const nr_ctrl_state_t *st, uint16_t rnti)
 double nr_ctrl_deficit(const nr_ctrl_state_t *st, uint16_t rnti)
 {
   const nr_ctrl_ue_t *u = find_ue(st, rnti);
+  if (!u && st->n_ue >= NR_CTRL_MAX_UE)
+    return NR_CTRL_UNTRACKED_DEFICIT; /* no room to track it: serve it after the tracked UEs */
   uint64_t granted = u ? u->granted_rbs + u->credit_rbs : 0;
   return (double)granted / (double)nr_ctrl_weight_of(st, rnti);
 }
@@ -171,7 +173,7 @@ void nr_ctrl_ue_activity(nr_ctrl_state_t *st, const uint16_t *rnti, const uint8_
   /* deficits are read before any credit is raised, so the result does not depend on the order */
   double deficit[NR_CTRL_MAX_UE];
   for (int i = 0; i < n; i++)
-    deficit[i] = nr_ctrl_deficit(st, rnti[i]);
+    deficit[i] = find_ue(st, rnti[i]) ? nr_ctrl_deficit(st, rnti[i]) : -1.0; /* an untracked UE is not a reference */
   for (int i = 0; i < n; i++) {
     double highest = -1.0; /* highest deficit among the other UEs of the group */
     for (int j = 0; j < n; j++)
@@ -228,6 +230,56 @@ static int is_connected(const nr_ctrl_ue_view_t *ues, int n_ues, uint16_t rnti)
     if (ues[k].rnti == rnti)
       return 1;
   return 0;
+}
+
+/* The MAC counters of a UE context only grow.  The resource-block counter is 32 bits wide in the MAC, so a
+ * large drop is a wrap and not a new context. */
+static int context_restarted(const nr_ctrl_ue_t *u, const nr_ctrl_ue_view_t *v)
+{
+  if (v->mac_dl_sdu_bytes < u->seen_sdu_bytes)
+    return 1;
+  return v->mac_dl_rbs < u->seen_rbs && u->seen_rbs - v->mac_dl_rbs < 0x80000000u;
+}
+
+void nr_ctrl_sync(nr_ctrl_state_t *st, const nr_ctrl_ue_view_t *ues, int n_ues)
+{
+  for (int r = 0; r < st->n_ue; r++) {
+    nr_ctrl_ue_t *u = &st->ue[r];
+    for (int k = 0; k < n_ues; k++) {
+      if (ues[k].rnti != u->rnti)
+        continue;
+      if (u->seen && context_restarted(u, &ues[k])) {
+        const uint16_t rnti = u->rnti;
+        memset(u, 0, sizeof(*u));
+        u->rnti = rnti;
+      }
+      u->seen = 1;
+      u->seen_rbs = ues[k].mac_dl_rbs;
+      u->seen_sdu_bytes = ues[k].mac_dl_sdu_bytes;
+      break;
+    }
+  }
+  nr_ctrl_prune(st, ues, n_ues);
+  if (st->rr_last_rnti && !is_connected(ues, n_ues, st->rr_last_rnti))
+    st->rr_last_rnti = 0;
+}
+
+void nr_ctrl_sync_slices(nr_ctrl_state_t *st, const nr_ctrl_ue_view_t *ues, int n_ues)
+{
+  int members[NR_CTRL_MAX_SLICE] = {0};
+  for (int k = 0; k < n_ues; k++)
+    members[nr_ctrl_slice_of(st, ues[k].rnti, NULL)]++;
+  for (int i = 0; i < NR_CTRL_MAX_SLICE; i++) {
+    nr_ctrl_slice_t *sl = &st->slice[i];
+    if (members[i]) {
+      sl->populated = 1;
+    } else if (sl->populated) {
+      sl->granted_rbs = 0;
+      sl->credit_rbs = 0;
+      sl->granted_slots = 0;
+      sl->populated = 0;
+    }
+  }
 }
 
 static int parse_ulong(const char *s, int base, unsigned long max, unsigned long *out)

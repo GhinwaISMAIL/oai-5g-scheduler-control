@@ -63,7 +63,7 @@ index 58a39a4..3f05133 100644
  
 -  slice_ind_data_t* slice = (slice_ind_data_t*)data;
 -  fill_slice_ind_data(slice);
-+  char reply[4096];
++  char reply[NR_CTRL_REPLY_SIZE];
 +  nr_ctrl_sm_view_t view;
 +  if (nr_ctrl_e2_send("GET", reply, sizeof(reply)) != 0 || nr_ctrl_sm_parse_get(reply, &view) != 0)
 +    return false;

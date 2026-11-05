@@ -1177,6 +1177,39 @@ static void test_many_ues(void)
   CHECK(mx - mn <= 2 * slots / 25); /* roughly even: 21 of 25 admitted per slot */
 }
 
+/* The status of the largest supported cell fits in the reply: every UE is listed. */
+static void test_status_of_32_ues(void)
+{
+  static char big[NR_CTRL_REPLY_SIZE];
+  sim_setup(32);
+  for (int i = 0; i < 32; i++) {
+    ues[i].mac_stats.dl.total_rbs = 4000000000u;
+    ues[i].mac_stats.dl.total_rbs_retx = 4000000000u;
+    ues[i].mac_stats.dl.total_sdu_bytes = 9000000000000000ULL;
+  }
+  char r[4096];
+  ctl("RESET", r, sizeof(r));
+  ctl("POLICY slice", r, sizeof(r));
+  for (int i = 0; i < 32; i++) {
+    char c[32];
+    snprintf(c, sizeof(c), "ASSOC %x %d", 0x1001 + i, 1 + i % 7);
+    ctl(c, r, sizeof(r));
+  }
+  for (int s = 0; s < 3000; s++) {
+    sim_slot_prepare(32, 1000000);
+    sim_slot(32, 8);
+  }
+  int len = ctl("GET", big, sizeof(big));
+  CHECK(len > 0 && len < (int)sizeof(big) - 1);
+  int n = 0;
+  for (const char *p = big; (p = strstr(p, "UE rnti=0x")) != NULL; p++)
+    n++;
+  CHECK(n == 32);
+  CHECK(len > 4096); /* more than the reply could hold before */
+  CHECK(strstr(big, "UE rnti=0x1020 ") && strstr(big, "SLOT "));
+  sim_setup(2);
+}
+
 /* Control commands racing the scheduler. */
 static void *hammer(void *arg)
 {
@@ -1272,10 +1305,16 @@ static void test_ue_credit(void)
 static void sim_set_ues(const uint16_t *rnti, int n)
 {
   NR_SCHED_LOCK(&mac.sched_lock);
+  /* the MAC counters of a UE that stays connected keep growing; a UE that is new in the list starts at zero */
+  static __typeof__(ues) before;
+  memcpy(before, ues, sizeof(ues));
   memset(ues, 0, sizeof(ues));
   memset(mac.UE_info.connected_ue_list, 0, sizeof(mac.UE_info.connected_ue_list));
   for (int i = 0; i < n; i++) {
     ues[i].rnti = rnti[i];
+    for (size_t j = 0; j < sizeof(ues) / sizeof(ues[0]); j++)
+      if (before[j].rnti == rnti[i])
+        ues[i].mac_stats = before[j].mac_stats;
     mac.UE_info.connected_ue_list[i] = &ues[i];
   }
   mac.dl_rb_alloc = nr_dl_ctrl_policy;
@@ -1427,6 +1466,31 @@ static void test_slices_dynamic(void)
     CHECK(ue_field(g, "0x1004", "granted_rbs=") == 0);
   }
 
+  /* --- the same RNTI returns before any scheduler call has seen it leave (an idle cell): a new UE context
+   * has lower MAC counters, so it does not inherit the association, the weight, the cap or the grants */
+  {
+    sim_setup(4);
+    slice_policy_on();
+    ctl("ASSOC 1004 5", r, sizeof(r));
+    ctl("WEIGHT 1004 3000", r, sizeof(r));
+    ctl("CAP 1004 20", r, sizeof(r));
+    memset(got, 0, sizeof(got));
+    dyn_run(4, NULL, 60, got, 0, NULL);
+    ctl("GET", g, sizeof(g));
+    CHECK(ue_field(g, "0x1004", "slice=") == 5 && ue_field(g, "0x1004", "weight=") == 3000 && ue_field(g, "0x1004", "granted_rbs=") > 0);
+    long v_before = get_field(g, "version=");
+    uint16_t three[3] = {0x1001, 0x1002, 0x1003}, four[4] = {0x1001, 0x1002, 0x1003, 0x1004};
+    sim_set_ues(three, 3);
+    sim_set_ues(four, 4); /* no scheduler call in between */
+    ctl("GET", g, sizeof(g));
+    CHECK(ue_field(g, "0x1004", "slice=") == 0 && ue_source(g, "0x1004") == 0);
+    CHECK(ue_field(g, "0x1004", "weight=") == NR_CTRL_DEFAULT_WEIGHT && ue_field(g, "0x1004", "cap=") == 0);
+    CHECK(ue_field(g, "0x1004", "granted_rbs=") == 0);
+    CHECK(get_field(g, "version=") == v_before); /* a clean-up is not a command */
+    /* the UEs that stayed keep what they had */
+    CHECK(ue_field(g, "0x1001", "granted_rbs=") > 0);
+  }
+
   /* --- random churn against a model of the membership: UEs come and go, sessions and rules change.
    * Checked in every call: the grants fit the slot, the number of UEs and the slice cap; at the end the
    * resource blocks of every slice equal what the model attributes to it. */
@@ -1518,6 +1582,14 @@ static void test_slices_dynamic(void)
           cands[j].skipped = true;
         model_slice[j] = assoc[i] >= 0 ? assoc[i] : (rule[key_of[i]] >= 0 ? rule[key_of[i]] : 0);
       }
+      {
+        int members[NR_CTRL_MAX_SLICE] = {0};
+        for (int j = 0; j < n; j++)
+          members[model_slice[j]]++;
+        for (int q = 0; q < NR_CTRL_MAX_SLICE; q++)
+          if (!members[q])
+            tally[q] = 0; /* a slice that has no UE starts again from zero grants */
+      }
       sim_slot(n, 4);
       int used = 0, nsched = 0;
       double per_slice[NR_CTRL_MAX_SLICE] = {0};
@@ -1547,6 +1619,145 @@ static void test_slices_dynamic(void)
 #undef RND
   }
   sim_setup(2);
+}
+
+/* ------------------------------- sessions, empty slices and a full table (state level) */
+
+static void test_sync_state(void)
+{
+  nr_ctrl_state_t st;
+  char r[4096];
+  nr_ctrl_ue_view_t v[3] = {
+      {.rnti = 0x1001, .mac_dl_rbs = 1000, .mac_dl_sdu_bytes = 50000},
+      {.rnti = 0x1002, .mac_dl_rbs = 2000, .mac_dl_sdu_bytes = 90000},
+      {.rnti = 0x1003, .mac_dl_rbs = 10, .mac_dl_sdu_bytes = 100},
+  };
+
+  /* an entry made by a command before any counter was read is kept */
+  memset(&st, 0, sizeof(st));
+  nr_ctrl_init(&st);
+  nr_ctrl_handle(&st, "POLICY slice", v, 3, r, sizeof(r));
+  nr_ctrl_handle(&st, "WEIGHT 1001 3000", v, 3, r, sizeof(r));
+  nr_ctrl_handle(&st, "CAP 1001 20", v, 3, r, sizeof(r));
+  nr_ctrl_handle(&st, "ASSOC 1001 4", v, 3, r, sizeof(r));
+  nr_ctrl_account(&st, 0x1001, 40);
+  uint32_t version = st.version;
+  nr_ctrl_sync(&st, v, 3);
+  CHECK(nr_ctrl_weight_of(&st, 0x1001) == 3000 && nr_ctrl_cap_of(&st, 0x1001) == 20);
+  int src;
+  CHECK(nr_ctrl_slice_of(&st, 0x1001, &src) == 4 && src == NR_CTRL_SRC_RNTI);
+
+  /* growing counters keep it */
+  v[0].mac_dl_rbs += 500;
+  v[0].mac_dl_sdu_bytes += 20000;
+  nr_ctrl_sync(&st, v, 3);
+  CHECK(nr_ctrl_weight_of(&st, 0x1001) == 3000 && nr_ctrl_slice_of(&st, 0x1001, &src) == 4);
+  CHECK(nr_ctrl_deficit(&st, 0x1001) == 40.0 / 3000.0);
+
+  /* a 32-bit wrap of the resource-block counter is not a new context */
+  v[0].mac_dl_rbs = 0xFFFFFFF0u;
+  nr_ctrl_sync(&st, v, 3);
+  v[0].mac_dl_rbs = 20;
+  v[0].mac_dl_sdu_bytes += 1000;
+  nr_ctrl_sync(&st, v, 3);
+  CHECK(nr_ctrl_weight_of(&st, 0x1001) == 3000);
+
+  /* lower counters: a new context, everything of the old one is gone, the version does not move */
+  v[0].mac_dl_rbs = 0;
+  v[0].mac_dl_sdu_bytes = 0;
+  nr_ctrl_sync(&st, v, 3);
+  CHECK(nr_ctrl_weight_of(&st, 0x1001) == NR_CTRL_DEFAULT_WEIGHT && nr_ctrl_cap_of(&st, 0x1001) == 0);
+  CHECK(nr_ctrl_slice_of(&st, 0x1001, &src) == 0 && src == NR_CTRL_SRC_DEFAULT);
+  CHECK(nr_ctrl_deficit(&st, 0x1001) == 0.0);
+  CHECK(st.version == version);
+
+  /* either counter alone is enough */
+  nr_ctrl_handle(&st, "WEIGHT 1002 700", v, 3, r, sizeof(r));
+  nr_ctrl_sync(&st, v, 3);
+  CHECK(nr_ctrl_weight_of(&st, 0x1002) == 700);
+  v[1].mac_dl_sdu_bytes = 10; /* bytes lower, blocks higher */
+  v[1].mac_dl_rbs = 5000;
+  nr_ctrl_sync(&st, v, 3);
+  CHECK(nr_ctrl_weight_of(&st, 0x1002) == NR_CTRL_DEFAULT_WEIGHT);
+  nr_ctrl_handle(&st, "WEIGHT 1002 700", v, 3, r, sizeof(r));
+  nr_ctrl_sync(&st, v, 3);
+  v[1].mac_dl_rbs = 4; /* blocks lower, bytes equal */
+  nr_ctrl_sync(&st, v, 3);
+  CHECK(nr_ctrl_weight_of(&st, 0x1002) == NR_CTRL_DEFAULT_WEIGHT);
+
+  /* a UE that is gone is dropped at the next call, not after a fixed number of calls */
+  nr_ctrl_handle(&st, "WEIGHT 1003 900", v, 3, r, sizeof(r));
+  CHECK(st.n_ue >= 1);
+  st.rr_last_rnti = 0x1003;
+  nr_ctrl_sync(&st, v, 2); /* 0x1003 left */
+  CHECK(nr_ctrl_weight_of(&st, 0x1003) == NR_CTRL_DEFAULT_WEIGHT);
+  CHECK(st.rr_last_rnti == 0);
+  st.rr_last_rnti = 0x1002;
+  nr_ctrl_sync(&st, v, 2);
+  CHECK(st.rr_last_rnti == 0x1002); /* still connected: kept */
+
+  /* a slice that loses its last UE starts again; its weight and cap stay, other slices are not touched */
+  memset(&st, 0, sizeof(st));
+  nr_ctrl_init(&st);
+  nr_ctrl_handle(&st, "POLICY slice", v, 3, r, sizeof(r));
+  nr_ctrl_handle(&st, "SLICE 1 WEIGHT 3000", v, 3, r, sizeof(r));
+  nr_ctrl_handle(&st, "SLICE 1 CAP 30", v, 3, r, sizeof(r));
+  nr_ctrl_handle(&st, "ASSOC 1001 1", v, 3, r, sizeof(r));
+  nr_ctrl_handle(&st, "ASSOC 1002 2", v, 3, r, sizeof(r));
+  nr_ctrl_sync_slices(&st, v, 3);
+  nr_ctrl_account_slice(&st, 1, 500);
+  nr_ctrl_account_slice(&st, 2, 300);
+  st.slice[1].credit_rbs = 77;
+  nr_ctrl_sync_slices(&st, v, 3);
+  CHECK(st.slice[1].granted_rbs == 500 && st.slice[1].credit_rbs == 77 && st.slice[2].granted_rbs == 300);
+  nr_ctrl_handle(&st, "ASSOC 1001 -", v, 3, r, sizeof(r)); /* slice 1 is empty now */
+  nr_ctrl_sync_slices(&st, v, 3);
+  CHECK(st.slice[1].granted_rbs == 0 && st.slice[1].credit_rbs == 0 && st.slice[1].granted_slots == 0);
+  CHECK(st.slice[1].weight == 3000 && st.slice[1].cap == 30 && st.slice[1].configured);
+  CHECK(st.slice[2].granted_rbs == 300);
+  nr_ctrl_account_slice(&st, 1, 10); /* grants counted while empty (a UE in the middle of leaving) ... */
+  nr_ctrl_sync_slices(&st, v, 3);
+  CHECK(st.slice[1].granted_rbs == 10); /* ... are not cleared again until it has had a member once more */
+  nr_ctrl_handle(&st, "ASSOC 1003 1", v, 3, r, sizeof(r));
+  nr_ctrl_sync_slices(&st, v, 3);
+  CHECK(st.slice[1].granted_rbs == 10 && st.slice[1].populated);
+
+  /* a full table: a UE without an entry is served after the tracked ones and is not a reference for the credit */
+  memset(&st, 0, sizeof(st));
+  nr_ctrl_init(&st);
+  uint16_t rn[NR_CTRL_MAX_UE + 1];
+  uint8_t grp[NR_CTRL_MAX_UE + 1] = {0};
+  for (int i = 0; i < NR_CTRL_MAX_UE; i++) {
+    rn[i] = (uint16_t)(0x2001 + i);
+    nr_ctrl_account(&st, rn[i], 100 + i);
+  }
+  rn[NR_CTRL_MAX_UE] = 0x3001;
+  CHECK(st.n_ue == NR_CTRL_MAX_UE);
+  CHECK(nr_ctrl_deficit(&st, 0x3001) == NR_CTRL_UNTRACKED_DEFICIT);
+  CHECK(nr_ctrl_deficit(&st, 0x3001) > nr_ctrl_deficit(&st, rn[NR_CTRL_MAX_UE - 1]));
+  nr_ctrl_account(&st, 0x3001, 50); /* dropped, as before */
+  CHECK(st.n_ue == NR_CTRL_MAX_UE && nr_ctrl_deficit(&st, 0x3001) == NR_CTRL_UNTRACKED_DEFICIT);
+  nr_ctrl_account(&st, rn[NR_CTRL_MAX_UE - 2], 4870); /* the leader of the tracked UEs: 5000 blocks at weight 1000 */
+  {
+    /* the untracked UE first in the list, then 31 tracked ones (the call looks at 32 UEs at most) */
+    uint16_t list[NR_CTRL_MAX_UE];
+    list[0] = 0x3001;
+    for (int i = 1; i < NR_CTRL_MAX_UE; i++)
+      list[i] = rn[i - 1];
+    nr_ctrl_ue_activity(&st, list, grp, NR_CTRL_MAX_UE);
+  }
+  /* the first tracked UE (100 blocks) is lifted to the leader less the bound, 5.0 * 1000 - 2000 = 3000, and not
+   * towards the untracked UE */
+  CHECK(st.ue[0].credit_rbs == 3000 - 100);
+  CHECK(st.ue[NR_CTRL_MAX_UE - 2].credit_rbs == 0);
+  /* with room again (a tracked UE left) it gets an entry and a normal deficit */
+  nr_ctrl_ue_view_t all[NR_CTRL_MAX_UE];
+  for (int i = 1; i < NR_CTRL_MAX_UE; i++)
+    all[i - 1].rnti = rn[i];
+  memset(&all[NR_CTRL_MAX_UE - 1], 0, sizeof(all[0]));
+  nr_ctrl_sync(&st, all, NR_CTRL_MAX_UE - 1);
+  CHECK(st.n_ue == NR_CTRL_MAX_UE - 1);
+  CHECK(nr_ctrl_deficit(&st, 0x3001) == 0.0);
 }
 
 /* ------------------------------------------------- standard slice messages */
@@ -1950,6 +2161,7 @@ int main(void)
   test_slices_e2();
   test_ue_credit();
   test_slices_dynamic();
+  test_sync_state();
   test_credit_groups();
   test_slice_del_command();
   test_slice_sm_plan();
@@ -1957,6 +2169,7 @@ int main(void)
   test_slice_sm_roundtrip();
   test_second_instance();
   test_many_ues();
+  test_status_of_32_ues();
   test_concurrency();
   printf("checks=%d failures=%d\n", checks, failures);
   return failures ? 1 : 0;
